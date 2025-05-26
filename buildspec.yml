@@ -1,0 +1,46 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.10 # Match your CDK project's Python version
+      nodejs: 18  # Or a version compatible with the CDK version you use
+    commands:
+      - echo "Installing Node.js and AWS CDK CLI..."
+      - npm install -g aws-cdk
+      - echo "Navigating to CDK project directory..."
+      - cd cdk_project  # Navigate into your CDK project folder
+      - echo "Installing Python dependencies..."
+      - pip install -r requirements.txt # Assumes requirements.txt is in cdk_project/
+  pre_build:
+    commands:
+      - echo "Current directory: $(pwd)"
+      - echo "Listing files in current directory..."
+      - ls -la
+      # The pipeline's execution role needs permissions for bootstrap if it's the first time.
+      # Alternatively, bootstrap manually once or use the CDK bootstrap action in CodePipeline.
+      # - cdk bootstrap aws://${AWS_ACCOUNT_ID}/${AWS_REGION} --toolkit-stack-name CDKToolkit-Pipeline-CI # Example
+  build:
+    commands:
+      - echo "Current directory before synth: $(pwd)"
+      # Ensure synth is run from the directory containing cdk.json (which should be the current one after 'cd cdk_project')
+      - echo "Synthesizing CDK stacks..."
+      - cdk synth MyMainInfrastructureStack # Or just 'cdk synth' if app.py defines all stacks to be synthesized
+  post_build:
+    commands:
+      - echo "Build completed on $(date)"
+      - echo "Listing contents of cdk.out directory..."
+      # The path to cdk.out is relative to where 'cdk synth' was run
+      - ls -la cdk.out 
+artifacts:
+  # base-directory path is relative to the root of the source checkout from CodeBuild
+  # If 'cd cdk_project' was run, and cdk.out is inside cdk_project,
+  # then the base-directory should reflect that.
+  base-directory: cdk_project/cdk.out 
+  files:
+    - '**/*' # Include all synthesized templates and assets from cdk.out
+# cache: # Optional: Cache dependencies to speed up builds
+#   paths:
+#     - '/root/.npm/**/*' # For global npm packages
+#     - './cdk_project/.venv/**/*' # If you have a virtual environment in your project
+#     - '/root/.cache/pip/**/*' # For pip cache
