@@ -21,7 +21,7 @@ phases:
   build:
     commands:
       - echo "--- BUILD PHASE ---"
-      - echo "Synthesizing specific CDK stack: MyMainInfrastructureStack"
+      - echo "Synthesizing stack: MyMainInfrastructureStack"
       - cdk synth MyMainInfrastructureStack
 
   post_build:
