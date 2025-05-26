@@ -10,20 +10,22 @@ phases:
       - echo "Installing Node.js and AWS CDK CLI..."
       - npm install -g aws-cdk
       - echo "Navigating to CDK project directory (assuming 'cdk_project' subdirectory)..."
-      - cd cdk_project  # Navigate into your CDK project folder
+      - cd cdk_project  # Ensure this is correct for your repo structure
       - echo "Current directory after cd: $(pwd)"
       - echo "Installing Python dependencies from requirements.txt..."
-      - pip install -r requirements.txt # Assumes requirements.txt is in the cdk_project/ directory
+      - pip install -r requirements.txt # Assumes requirements.txt is in cdk_project/
   pre_build:
     commands:
       - echo "--- PRE_BUILD PHASE ---"
       - echo "Current directory: $(pwd)" # Should be cdk_project/
+      # Ensure the CodeBuild role has permissions for bootstrap (typically CloudFormation full access, IAM passrole)
+      # It's often better to bootstrap manually or have a dedicated pipeline stage for it if it changes infrequently.
+      # If you run it here, use a qualifier to avoid conflicts with other users/pipelines if using default toolkit name.
+      - echo "Attempting CDK bootstrap..."
+      - cdk bootstrap # This will use the AWS credentials of the CodeBuild role
+      - echo "CDK bootstrap command finished."
       - echo "Listing files in current directory (should contain app.py, cdk.json):"
       - ls -la
-      # Example: Bootstrap if needed by the pipeline's role. 
-      # Ensure the CodeBuild role has permissions for this if you uncomment.
-      # - echo "Attempting CDK bootstrap for pipeline permissions if necessary..."
-      # - cdk bootstrap aws://${AWS_ACCOUNT_ID}/${AWS_REGION} --toolkit-stack-name CDKToolkit-PipelineCI # Use a distinct toolkit name
   build:
     commands:
       - echo "--- BUILD PHASE ---"
