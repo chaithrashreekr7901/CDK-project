@@ -2,23 +2,30 @@ version: 0.2
 
 phases:
   install:
+    runtime-versions:
+      nodejs: 20
+      python: 3.11
+
     commands:
       - echo "--- INSTALL PHASE ---"
-      - echo "Installing Node.js and AWS CDK CLI..."
+      - echo "Installing AWS CDK CLI globally..."
       - npm install -g aws-cdk
-      - echo "Installing Python dependencies from requirements.txt at root level..."
+      - echo "Installing Python dependencies from root requirements.txt..."
+      - pip install --upgrade pip
       - pip install -r requirements.txt
 
   pre_build:
     commands:
       - echo "--- PRE-BUILD PHASE ---"
+      - echo "Verifying AWS CDK version..."
+      - cdk --version
       - echo "Synthesizing the CDK app..."
       - cdk synth
 
   build:
     commands:
       - echo "--- BUILD PHASE ---"
-      - echo "Deploying CDK stacks..."
+      - echo "Deploying CDK stacks without approval prompts..."
       - cdk deploy --require-approval never
 
   post_build:
