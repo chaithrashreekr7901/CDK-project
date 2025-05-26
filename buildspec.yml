@@ -3,51 +3,34 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      python: 3.10 # Match your CDK project's Python version
-      nodejs: 20  # Or a version compatible with the CDK version you use
+      python: 3.10
+      nodejs: 20
     commands:
       - echo "--- INSTALL PHASE ---"
-      - echo "Installing Node.js and AWS CDK CLI..."
       - npm install -g aws-cdk
-      - echo "Navigating to CDK project directory (assuming 'cdk_project' subdirectory)..."
       - pip install --upgrade pip
-      - echo "Installing Python dependencies from requirements.txt..."
-      - pip install -r requirements.txt # Assumes requirements.txt is in cdk_project/
+      - pip install -r requirements.txt
+
   pre_build:
     commands:
       - echo "--- PRE_BUILD PHASE ---"
-      - echo "Current directory: $(pwd)" # Should be cdk_project/
-      # Ensure the CodeBuild role has permissions for bootstrap (typically CloudFormation full access, IAM passrole)
-      # It's often better to bootstrap manually or have a dedicated pipeline stage for it if it changes infrequently.
-      # If you run it here, use a qualifier to avoid conflicts with other users/pipelines if using default toolkit name.
-      - echo "Attempting CDK bootstrap..."
-      - cdk bootstrap # This will use the AWS credentials of the CodeBuild role
-      - echo "CDK bootstrap command finished."
-      - echo "Listing files in current directory (should contain app.py, cdk.json):"
+      - echo "Current directory: $(pwd)"
+      - cdk bootstrap
       - ls -la
+
   build:
     commands:
       - echo "--- BUILD PHASE ---"
-      # 'cd cdk_project' was done in the install phase, so current directory should be correct
-      - echo "Current directory before synth: $(pwd)" 
-      - echo "Synthesizing CDK stacks..."
-      - cdk synth MyMainInfrastructureStack # Or your specific stack name(s), or 'cdk synth' for all
+      - echo "Synthesizing specific CDK stack: MyMainInfrastructureStack"
+      - cdk synth MyMainInfrastructureStack
+
   post_build:
     commands:
       - echo "--- POST_BUILD PHASE ---"
       - echo "Build completed on $(date)"
-      - echo "Listing contents of cdk.out directory (should be in cdk_project/cdk.out)..."
-      # The path to cdk.out is relative to where 'cdk synth' was run (cdk_project)
-      - ls -la cdk.out 
+      - ls -la cdk.out
+
 artifacts:
-  # base-directory path is relative to the root of the source checkout from CodeBuild
-  # Since we 'cd cdk_project', and cdk.out is created inside it,
-  # the path from the repo root is 'cdk_project/cdk.out'.
-  base-directory: cdk_project/cdk.out 
+  base-directory: cdk.out
   files:
-    - '**/*' # Include all synthesized templates and assets from cdk.out
-# cache: # Optional: Cache dependencies to speed up builds
-#   paths:
-#     - '/root/.npm/**/*' # For global npm packages like aws-cdk
-#     - './cdk_project/.venv/**/*' # If you have a virtual environment named .venv inside cdk_project
-#     - '/root/.cache/pip/**/*' # For pip cache
+    - '**/*'
