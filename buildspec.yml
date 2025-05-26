@@ -2,35 +2,30 @@ version: 0.2
 
 phases:
   install:
-    runtime-versions:
-      python: 3.10
-      nodejs: 18
     commands:
       - echo "--- INSTALL PHASE ---"
       - echo "Installing Node.js and AWS CDK CLI..."
       - npm install -g aws-cdk
-      - echo "Installing Python dependencies from requirements.txt in cdk_project/"
-      - pip install -r cdk_project/requirements.txt
+      - echo "Installing Python dependencies from requirements.txt at root level..."
+      - pip install -r requirements.txt
+
   pre_build:
     commands:
-      - echo "--- PRE_BUILD PHASE ---"
-      - cd cdk_project
-      - echo "Attempting CDK bootstrap..."
-      - cdk bootstrap
-      - echo "CDK bootstrap finished."
-      - ls -la
+      - echo "--- PRE-BUILD PHASE ---"
+      - echo "Synthesizing the CDK app..."
+      - cdk synth
+
   build:
     commands:
       - echo "--- BUILD PHASE ---"
-      - cd cdk_project
-      - echo "Synthesizing CDK stacks..."
-      - cdk synth MyMainInfrastructureStack
+      - echo "Deploying CDK stacks..."
+      - cdk deploy --require-approval never
+
   post_build:
     commands:
-      - echo "--- POST_BUILD PHASE ---"
-      - echo "Build completed on $(date)"
-      - ls -la cdk_project/cdk.out
+      - echo "--- POST-BUILD PHASE ---"
+      - echo "Build and deployment completed successfully."
+
 artifacts:
-  base-directory: cdk_project/cdk.out
   files:
     - '**/*'
