@@ -30,4 +30,4 @@ phases:
 
 artifacts:
   files:
-    - '**/*'
+    - 'cdk.out/**/*'   # ✅ This line is updated to include synthesized templates
