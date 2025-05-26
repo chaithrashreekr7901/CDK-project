@@ -3,38 +3,50 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      python: 3.10
-      nodejs: 18
+      python: 3.10 # Match your CDK project's Python version
+      nodejs: 18  # Or a version compatible with the CDK version you use
     commands:
       - echo "--- INSTALL PHASE ---"
       - echo "Installing Node.js and AWS CDK CLI..."
       - npm install -g aws-cdk
       - echo "Navigating to CDK project directory (assuming 'cdk_project' subdirectory)..."
-      - cd cdk_project 
+      - cd cdk_project  # Navigate into your CDK project folder
       - echo "Current directory after cd: $(pwd)"
       - echo "Installing Python dependencies from requirements.txt..."
-      - pip install -r requirements.txt
-  pre_build: # This might be around line 13 depending on editor/comments
-    commands: # This might be around line 14
-      - echo "--- PRE_BUILD PHASE ---" # Line 15
-      - echo "Current directory: $(pwd)" # Line 16
-      - echo "Listing files in current directory (should contain app.py, cdk.json):" # Line 17
+      - pip install -r requirements.txt # Assumes requirements.txt is in the cdk_project/ directory
+  pre_build:
+    commands:
+      - echo "--- PRE_BUILD PHASE ---"
+      - echo "Current directory: $(pwd)" # Should be cdk_project/
+      - echo "Listing files in current directory (should contain app.py, cdk.json):"
       - ls -la
+      # Example: Bootstrap if needed by the pipeline's role. 
+      # Ensure the CodeBuild role has permissions for this if you uncomment.
+      # - echo "Attempting CDK bootstrap for pipeline permissions if necessary..."
+      # - cdk bootstrap aws://${AWS_ACCOUNT_ID}/${AWS_REGION} --toolkit-stack-name CDKToolkit-PipelineCI # Use a distinct toolkit name
   build:
     commands:
       - echo "--- BUILD PHASE ---"
-      # Ensure you are in the cdk_project directory if your cdk.json is there
-      # The 'cd cdk_project' in the install phase should handle this for subsequent phases.
+      # 'cd cdk_project' was done in the install phase, so current directory should be correct
       - echo "Current directory before synth: $(pwd)" 
       - echo "Synthesizing CDK stacks..."
-      - cdk synth MyMainInfrastructureStack 
+      - cdk synth MyMainInfrastructureStack # Or your specific stack name(s), or 'cdk synth' for all
   post_build:
     commands:
       - echo "--- POST_BUILD PHASE ---"
       - echo "Build completed on $(date)"
-      - echo "Listing contents of cdk.out directory..."
+      - echo "Listing contents of cdk.out directory (should be in cdk_project/cdk.out)..."
+      # The path to cdk.out is relative to where 'cdk synth' was run (cdk_project)
       - ls -la cdk.out 
 artifacts:
+  # base-directory path is relative to the root of the source checkout from CodeBuild
+  # Since we 'cd cdk_project', and cdk.out is created inside it,
+  # the path from the repo root is 'cdk_project/cdk.out'.
   base-directory: cdk_project/cdk.out 
   files:
-    - '**/*'
+    - '**/*' # Include all synthesized templates and assets from cdk.out
+# cache: # Optional: Cache dependencies to speed up builds
+#   paths:
+#     - '/root/.npm/**/*' # For global npm packages like aws-cdk
+#     - './cdk_project/.venv/**/*' # If you have a virtual environment named .venv inside cdk_project
+#     - '/root/.cache/pip/**/*' # For pip cache
