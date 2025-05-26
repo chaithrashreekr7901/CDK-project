@@ -16,8 +16,6 @@ phases:
       - echo "--- PRE-BUILD PHASE ---"
       - echo "Verifying CDK version..."
       - cdk --version
-      - echo "Bootstrapping CDK environment if needed..."
-      - cdk bootstrap
 
   build:
     commands:
