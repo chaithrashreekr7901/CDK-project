@@ -1,0 +1,14 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - npm install -g aws-cdk
+      - pip install -r requirements.txt
+
+  build:
+    commands:
+      - echo ">>> CDK Bootstrap Phase <<<"
+      - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - export AWS_REGION=${AWS_REGION:-us-east-1}
+      - cdk bootstrap aws://$ACCOUNT_ID/$AWS_REGION
