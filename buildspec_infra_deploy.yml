@@ -1,0 +1,31 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 18
+    commands:
+      - echo "Installing CDK globally"
+      - npm install -g aws-cdk
+      # Add other dependency installations if needed
+
+  pre_build:
+    commands:
+      - echo "Starting CDK infrastructure deployment for stack: ${CDK_INFRA_STACK_NAME}"
+      # The input artifact (CdkTemplatesOutput, containing cdk.out/)
+      # is automatically downloaded and extracted to the current working directory.
+
+  build:
+    commands:
+      - echo "Running cdk deploy for infrastructure stack: ${CDK_INFRA_STACK_NAME}..."
+      # The cdk.out directory from the input artifact is used by cdk deploy
+      - cdk deploy "${CDK_INFRA_STACK_NAME}" --require-approval never --outputs-file cdk-deploy-outputs.json
+      - echo "CDK infrastructure deployment complete."
+
+  artifacts:
+    files:
+      - cdk-deploy-outputs.json # Optional output
+
+  cache:
+    paths:
+      - '/root/.npm/**/*'

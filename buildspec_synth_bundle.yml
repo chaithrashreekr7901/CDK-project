@@ -1,90 +1,62 @@
 version: 0.2
 
-env:
-  variables:
-    # This S3 bucket is where your application bundles will be stored by this buildspec.
-    # This value should be passed from your PipelineStack to this CodeBuild project's environment.
-    APP_BUNDLE_S3_BUCKET: "mychaithrabucket" # Ensure this is set correctly in PipelineStack.py
-    # AWS_REGION will be available from the CodeBuild environment if your PipelineStack passes it or if it's configured on the project.
-    # AWS_REGION: "your-aws-region"
-
-  # parameter-store: section has been REMOVED as it was likely the source of the YAML error
-  # and assuming it's not currently needed.
-  # If you need to use Parameter Store, ensure it's a map:
-  # parameter-store:
-  #   MY_ENV_VAR_FROM_SSM: "/my/ssm/parameter"
-
 phases:
   install:
     runtime-versions:
-      nodejs: 18 # Or your preferred Node.js version for CDK and/or your app
-      # python: 3.11 # Uncomment and adjust if your CDK app is Python
+      nodejs: 18
     commands:
       - echo "Installing CDK globally"
       - npm install -g aws-cdk
-      # If your CDK app is Python:
-      # - echo "Installing Python dependencies for CDK app"
-      # - pip install -r requirements.txt # Or your specific CDK app requirements file
-      # If your CDK app is TypeScript/JavaScript:
-      # - echo "Installing Node.js dependencies for CDK app"
-      # - npm ci # Or yarn install
+      # Add other dependency installations for your CDK app if needed (e.g., pip install -r requirements.txt)
 
   pre_build:
     commands:
       - echo "Starting CDK synth and application bundling"
-      - echo "App Bundle S3 Bucket: ${APP_BUNDLE_S3_BUCKET}"
-      - echo "AWS Region: ${AWS_REGION}" # Verify region is available if AWS CLI commands need it explicitly
 
   build:
     commands:
       - echo "Running cdk synth..."
-      - cdk synth
-      - echo "CDK synth complete. Output is in cdk.out/"
+      - cdk synth # Output goes to cdk.out/ by default
+      - echo "CDK synth complete."
 
-      - echo "Creating application bundle..."
-      - mkdir app_bundle # This directory will become the AppBundleOutput artifact
-      - echo "Copying application source files..."
+      - echo "Creating application bundle (app_bundle.zip)..."
+      - mkdir app_bundle_temp_dir # Temporary directory for bundling
       - |
         if [ -d "application_source" ]; then
-          cp -r application_source/* app_bundle/
+          cp -r application_source/* app_bundle_temp_dir/
         else
           echo "Warning: 'application_source' directory not found."
         fi
-      - echo "Copying appspec.yml..."
       - |
         if [ -f "appspec.yml" ]; then
-          cp appspec.yml app_bundle/
+          cp appspec.yml app_bundle_temp_dir/
         else
-          echo "Error: appspec.yml not found at the root of the repository."
-          echo "This file is required for CodeDeploy."
+          echo "Error: appspec.yml not found at the root. This is required for CodeDeploy."
           exit 1
         fi
-      
-      # Use CODEBUILD_RESOLVED_SOURCE_VERSION for a unique key, fallback to timestamp
-      - export APP_BUNDLE_FILENAME="my-app-${CODEBUILD_RESOLVED_SOURCE_VERSION:-$(date +%s)}.zip"
-      - export APP_BUNDLE_S3_KEY="app-revisions/${APP_BUNDLE_FILENAME}"
-
-      - echo "Zipping application bundle to ${APP_BUNDLE_FILENAME}..."
-      - (cd app_bundle && zip -r ../"${APP_BUNDLE_FILENAME}" .) # Zip into the parent directory
-
-      - echo "Uploading application bundle to s3://${APP_BUNDLE_S3_BUCKET}/${APP_BUNDLE_S3_KEY}"
-      - aws s3 cp "${APP_BUNDLE_FILENAME}" "s3://${APP_BUNDLE_S3_BUCKET}/${APP_BUNDLE_S3_KEY}" --region "${AWS_REGION}"
-      - echo "Upload complete."
-
-      # Create a file with the S3 location of the bundle. This will be an artifact.
-      - echo "Creating bundle_location.json in cdk.out/"
-      # Ensure this line is correctly quoted if it causes issues (single quotes around the whole command string)
-      - 'echo "{\"s3_bucket\": \"${APP_BUNDLE_S3_BUCKET}\", \"s3_key\": \"${APP_BUNDLE_S3_KEY}\"}" > cdk.out/bundle_location.json'
-      - echo "bundle_location.json created in cdk.out/"
+      # Create the zip file in the root of the CodeBuild source directory
+      # This will be picked up by the secondary artifact definition below.
+      - (cd app_bundle_temp_dir && zip -r ../app_bundle.zip .)
+      - echo "app_bundle.zip created successfully."
+      # This buildspec NO LONGER uploads to S3 or creates bundle_location.json
 
   artifacts:
-    # Primary artifact: CDK output (includes cdk.out/ and cdk.out/bundle_location.json)
-    # This will be mapped to cdk_synth_output_with_location_artifact in PipelineStack.py
+    # Primary Artifact (CDK Templates - maps to 'cdk_templates_artifact' in PipelineStack)
+    # CodePipeline's CodeBuildAction maps the first item in its 'outputs' list to this primary artifact definition.
     files:
       - '**/*'
-    base-directory: 'cdk.out'
+    base-directory: 'cdk.out' # All files and subdirectories from cdk.out
+
+    # Secondary Artifact (Application Bundle - maps to 'application_bundle_artifact' in PipelineStack)
+    # The 'identifier' here ('AppBundleOutput') MUST match the 'artifact_name' property
+    # of the second codepipeline.Artifact object in the CodeBuildAction's 'outputs' list in PipelineStack.py.
+    secondary-artifacts:
+      AppBundleOutput: # This identifier matches application_bundle_artifact.artifact_name
+        files:
+          - app_bundle.zip # The zip file created in the build phase
+        # base-directory: '.' # Assuming app_bundle.zip is in the root of the build environment
+        name: ApplicationBundleArtifact_$(date +%Y-%m-%d_%H-%M-%S) # Optional: S3 artifact name formatting
 
   cache:
     paths:
-      - '/root/.npm/**/*' # Cache npm packages for faster subsequent builds
-      # - '/root/.cache/pip/**/*' # Cache pip packages if using Python
+      - '/root/.npm/**/*'

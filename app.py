@@ -13,10 +13,10 @@ from pipeline.pipeline_stack import PipelineStack
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', # Added %(name)s for logger context
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-logger = logging.getLogger(__name__) # Use __name__ for the logger
+logger = logging.getLogger(__name__)
 
 app = cdk.App()
 
@@ -40,11 +40,11 @@ try:
     logger.info("Deployment configuration loaded successfully.")
 except Exception as e:
     logger.error(f"Failed to load deployment configuration: {e}", exc_info=True)
-    raise # Re-raise the exception to stop execution if config is critical
+    raise
 
 # --- Main Infrastructure Stack ---
-# This stack will be modified to include CodeDeploy resources and parameters
-main_stack_name = config.get("main_stack_name", "MyMainInfrastructureStack") # Get stack name from config or default
+# This stack will define CodeDeploy Application and DeploymentGroup
+main_stack_name = config.get("main_stack_name", "MyMainInfrastructureStack")
 main_infra_stack_description = config.get("main_stack_description", "Orchestrator stack for deploying multiple VPCs, resources, and CodeDeploy setup.")
 
 main_infra_stack = MainOrchestratorStack(app, main_stack_name,
@@ -56,40 +56,34 @@ logger.info(f"Main infrastructure stack '{main_stack_name}' defined.")
 
 # --- CI/CD Pipeline Stack Configuration ---
 
-# S3 bucket where application bundles will be uploaded by the pipeline's synth stage
-# IMPORTANT: Replace this with the actual name of an S3 bucket you have created.
-# This bucket should be in the same AWS account and region as your pipeline.
-# Ensure it's globally unique. Example: "mycompany-crmp-app-bundles-12345-us-east-1"
-APP_BUNDLE_S3_BUCKET_NAME = config.get("app_bundle_s3_bucket_name", "mychaithrabucket") # Get from config or default
-
-if APP_BUNDLE_S3_BUCKET_NAME == "your-unique-app-bundle-bucket-crmp":
-    logger.critical("CRITICAL: Default APP_BUNDLE_S3_BUCKET_NAME is used. "
-                    "Please replace this with your actual unique S3 bucket name in your deployment_config.py or directly in app.py.")
-    # Consider raising an error to prevent deployment with a placeholder bucket name.
-    # raise ValueError("APP_BUNDLE_S3_BUCKET_NAME must be set to a unique S3 bucket name.")
-
 # GitHub Configuration - Consider moving these to your deployment_config.py or CDK context
 GITHUB_CONNECTION_ARN = config.get("github_connection_arn", "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1")
 GITHUB_REPO_OWNER = config.get("github_repo_owner", "chaithrashreekr7901")
 GITHUB_REPO_NAME = config.get("github_repo_name", "CDK-project")
-GITHUB_BRANCH = config.get("github_branch_name", "CRMP-cdk") # Changed from GITHUB_BRANCH to avoid conflict if it was a global
+GITHUB_BRANCH = config.get("github_branch_name", "CRMP-cdk")
 
-pipeline_stack_name = config.get("pipeline_stack_name", "MyCDKApplicationPipelineStack")
-pipeline_description = config.get("pipeline_stack_description", f"CI/CD Pipeline for deploying the {main_stack_name} and its application.")
+# Names for CodeDeploy resources - these should match what MainOrchestratorStack creates
+# You might want to get these from config as well, or ensure they are consistently named.
+# Example: If MainOrchestratorStack names them based on its own stack name.
+CODEPLOY_APPLICATION_NAME = f"{main_stack_name}-EC2App" # Example name
+CODEPLOY_DEPLOYMENT_GROUP_NAME = f"{main_stack_name}-EC2-DG" # Example name
+
+pipeline_stack_name = config.get("pipeline_stack_name", "MyCDKDirectCodeDeployPipeline") # Renamed for clarity
+pipeline_description = config.get("pipeline_stack_description", f"CI/CD Pipeline for {main_stack_name} with direct CodeDeploy action.")
 
 PipelineStack(app, pipeline_stack_name,
     source_connection_arn=GITHUB_CONNECTION_ARN,
     source_repo_owner=GITHUB_REPO_OWNER,
     source_repo_name=GITHUB_REPO_NAME,
     source_branch_name=GITHUB_BRANCH,
-    cdk_infra_stack_name=main_stack_name, # This is the MainOrchestratorStack
-    app_bundle_s3_bucket_name=APP_BUNDLE_S3_BUCKET_NAME, # Pass the S3 bucket name
+    cdk_infra_stack_name=main_stack_name,
+    codedeploy_application_name=CODEPLOY_APPLICATION_NAME,       # New parameter
+    codedeploy_deployment_group_name=CODEPLOY_DEPLOYMENT_GROUP_NAME, # New parameter
     env=env,
     description=pipeline_description
 )
 logger.info(f"Pipeline stack '{pipeline_stack_name}' defined.")
 
-# Synthesize the CDK app
 try:
     app.synth()
     logger.info("CDK synthesis successful. CloudFormation templates are in 'cdk.out/'.")
