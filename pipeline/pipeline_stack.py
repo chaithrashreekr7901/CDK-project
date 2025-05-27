@@ -65,7 +65,7 @@ class PipelineStack(Stack):
             self, "CdkBootstrapProject",
             project_name=f"{Stack.of(self).stack_name}-Bootstrap",
             role=codebuild_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec-bootstrap.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_bootstrap.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0
             )
@@ -75,7 +75,7 @@ class PipelineStack(Stack):
             self, "CdkSynthProject",
             project_name=f"{Stack.of(self).stack_name}-Synth",
             role=codebuild_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec-synth.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_synth.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0
             )
@@ -85,7 +85,7 @@ class PipelineStack(Stack):
             self, "CdkDeployProject",
             project_name=f"{Stack.of(self).stack_name}-Deploy",
             role=codebuild_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec-deploy.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_deploy.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0
             )
