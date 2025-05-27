@@ -1,11 +1,12 @@
 version: 0.2
 
-env:
-  variables:
-    # AWS_REGION will be available from the CodeBuild environment if your PipelineStack passes it
-    # or if it's configured on the project.
-    # No other environment variables are strictly needed by this buildspec directly,
-    # assuming CDK and application code handle their own configurations.
+# The 'env.variables' section has been removed from here.
+# Environment variables like APP_BUNDLE_S3_BUCKET and AWS_REGION are expected
+# to be injected directly into the CodeBuild job's environment by the
+# PipelineStack.py definition of the CdkSynthAndBundleProject.
+# If you had other subsections for 'env' like 'parameter-store' or 'secrets-manager',
+# the 'env:' key would remain with those subsections. If 'variables' was the ONLY
+# sub-key under 'env' and it became empty, the entire 'env:' section can be omitted.
 
 phases:
   install:
@@ -25,7 +26,16 @@ phases:
   pre_build:
     commands:
       - echo "Starting CDK synth and application bundling"
-      - echo "AWS Region: ${AWS_REGION}" # Verify region is available if needed
+      # These environment variables are expected to be set by the CodeBuild project configuration
+      # (passed from PipelineStack.py)
+      - echo "App Bundle S3 Bucket (from Project Env): ${APP_BUNDLE_S3_BUCKET}"
+      - echo "AWS Region (from Project Env): ${AWS_REGION}"
+      - |
+        if [ -z "${APP_BUNDLE_S3_BUCKET}" ] || [ -z "${AWS_REGION}" ]; then
+          echo "Error: APP_BUNDLE_S3_BUCKET or AWS_REGION environment variables are not set in the CodeBuild project."
+          echo "These should be configured in PipelineStack.py when defining the CdkSynthAndBundleProject."
+          exit 1
+        fi
 
   build:
     commands:
@@ -54,11 +64,8 @@ phases:
       # This will be picked up by the secondary artifact definition below.
       - (cd app_bundle_temp_dir && zip -r ../app_bundle.zip .)
       - echo "app_bundle.zip created successfully in the root build directory."
-      # This buildspec NO LONGER uploads to S3 or creates bundle_location.json
-      # It relies on CodePipeline to package the specified artifacts.
 
-# --- ARTIFACTS section is a TOP-LEVEL key ---
-# (Same indentation as 'version', 'env', 'phases')
+# ARTIFACTS section is a TOP-LEVEL key (same indentation as 'version', 'phases')
 artifacts:
   # Primary Artifact (CDK Templates - maps to 'cdk_templates_artifact' in PipelineStack)
   # CodePipeline's CodeBuildAction maps the first item in its 'outputs' list
@@ -78,8 +85,7 @@ artifacts:
       base-directory: '.' # Specifies that app_bundle.zip is in the root of the CodeBuild source directory
       name: ApplicationBundleArtifact_$(date +%Y-%m-%d_%H-%M-%S) # Optional: S3 artifact name formatting
 
-# --- CACHE section is a TOP-LEVEL key ---
-# (Same indentation as 'version', 'env', 'phases', 'artifacts')
+# CACHE section is a TOP-LEVEL key (same indentation as 'version', 'phases', 'artifacts')
 cache:
   paths:
     - '/root/.npm/**/*' # Cache npm packages for faster subsequent builds
