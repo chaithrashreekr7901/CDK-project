@@ -60,17 +60,7 @@ class PipelineStack(Stack):
             resources=["*"]
         ))
 
-        # 3. CodeBuild Projects
-        bootstrap_project = codebuild.PipelineProject(
-            self, "CdkBootstrapProject",
-            project_name=f"{Stack.of(self).stack_name}-Bootstrap",
-            role=codebuild_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_bootstrap.yml"),
-            environment=codebuild.BuildEnvironment(
-                build_image=codebuild.LinuxBuildImage.STANDARD_7_0
-            )
-        )
-
+        # 3. CodeBuild Projects (excluding bootstrap)
         synth_project = codebuild.PipelineProject(
             self, "CdkSynthProject",
             project_name=f"{Stack.of(self).stack_name}-Synth",
@@ -93,7 +83,6 @@ class PipelineStack(Stack):
 
         # 4. Artifacts
         source_output = codepipeline.Artifact("SourceOutput")
-        bootstrap_output = codepipeline.Artifact("BootstrapOutput")
         synth_output = codepipeline.Artifact("SynthOutput")
         deploy_output = codepipeline.Artifact("DeployOutput")
 
@@ -116,7 +105,7 @@ class PipelineStack(Stack):
             resources=["*"]
         ))
 
-        # 6. CodePipeline Definition
+        # 6. CodePipeline Definition (Bootstrap stage removed)
         pipeline = codepipeline.Pipeline(
             self, "CdkPipeline",
             pipeline_name=f"{Stack.of(self).stack_name}-Pipeline",
@@ -134,17 +123,6 @@ class PipelineStack(Stack):
                             connection_arn=source_connection_arn,
                             output=source_output,
                             trigger_on_push=True
-                        )
-                    ]
-                ),
-                codepipeline.StageProps(
-                    stage_name="Bootstrap",
-                    actions=[
-                        codepipeline_actions.CodeBuildAction(
-                            action_name="CDK_Bootstrap",
-                            project=bootstrap_project,
-                            input=source_output,
-                            outputs=[bootstrap_output]
                         )
                     ]
                 ),
