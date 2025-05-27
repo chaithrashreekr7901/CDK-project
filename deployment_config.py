@@ -1648,7 +1648,7 @@ def get_deployment_configurations() -> dict:
         "auto_scaling_groups": [ # LIST of OBJECTS: Each object defines one Auto Scaling Group.
             {
                 "id": "MyWebAppASG",        # STRING (Required): Unique logical ID for this ASG config. Used for CDK construct ID.
-                "enabled": True,            # BOOLEAN (Required): 'true' to deploy this ASG, 'false' to skip.
+                "enabled": False,            # BOOLEAN (Required): 'true' to deploy this ASG, 'false' to skip.
                 "config": {                 # OBJECT (Required): Contains all configurations for this Auto Scaling Group.
                     "auto_scaling_group_name": "my-web-app-asg-example", # STRING (Optional): Physical name. Auto-generated if omitted.
                     "vpc_id": "vpc-0682a04278f37a95c", # STRING (Required): The VPC ID where instances will be launched.

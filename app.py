@@ -8,7 +8,7 @@ from main_orchestrator_stack import MainOrchestratorStack
 from deployment_config import get_deployment_configurations
 
 # Import Pipeline Stack from pipeline module
-from pipeline.pipeline_stack import PipelineStack 
+from pipeline.pipeline_stack import PipelineStack
 
 # Setup logging
 logging.basicConfig(
@@ -38,21 +38,35 @@ try:
         raise TypeError("Configuration must be a dictionary.")
 except Exception as e:
     logger.error(f"Failed to load deployment configuration: {e}", exc_info=True)
-    exit(1)
+    # It's generally better to let the app crash here if config is critical
+    raise # Re-raise the exception to stop execution
 
 # --- Main Infrastructure Stack ---
+# This stack will be modified to include CodeDeploy resources and parameters
 main_stack_name = "MyMainInfrastructureStack"
-MainOrchestratorStack(app, main_stack_name,
-    description="Orchestrator stack for deploying multiple VPCs and resources (v5).",
+main_infra_stack = MainOrchestratorStack(app, main_stack_name, # Store the instance if needed later
+    description="Orchestrator stack for deploying multiple VPCs, resources, and CodeDeploy setup (v6).",
     config=config,
     env=env
 )
+logger.info(f"Main infrastructure stack '{main_stack_name}' defined.")
 
 # --- CI/CD Pipeline Stack Configuration ---
-GITHUB_CONNECTION_ARN = "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1"
-GITHUB_REPO_OWNER = "chaithrashreekr7901"
-GITHUB_REPO_NAME = "CDK-project"
-GITHUB_BRANCH = "CRMP-cdk"
+# S3 bucket where application bundles will be uploaded by the pipeline's synth stage
+# IMPORTANT: Replace this with the actual name of an S3 bucket you have created or will create.
+# This bucket should be in the same AWS account and region as your pipeline.
+APP_BUNDLE_S3_BUCKET_NAME = "mychaithrabucket" # <<< --- REPLACE THIS
+
+if APP_BUNDLE_S3_BUCKET_NAME == "your-unique-app-bundle-bucket-crmp":
+    logger.warning("Default APP_BUNDLE_S3_BUCKET_NAME is used. Please replace with your actual bucket name.")
+    # Consider raising an error or exiting if a default placeholder is used for critical infra.
+    # raise ValueError("APP_BUNDLE_S3_BUCKET_NAME must be set to a unique S3 bucket name.")
+
+
+GITHUB_CONNECTION_ARN = "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1" # Replace if different
+GITHUB_REPO_OWNER = "chaithrashreekr7901" # Replace if different
+GITHUB_REPO_NAME = "CDK-project" # Replace if different
+GITHUB_BRANCH = "CRMP-cdk" # Replace if different
 
 pipeline_stack_name = "MyCDKApplicationPipelineStack"
 PipelineStack(app, pipeline_stack_name,
@@ -60,8 +74,17 @@ PipelineStack(app, pipeline_stack_name,
     source_repo_owner=GITHUB_REPO_OWNER,
     source_repo_name=GITHUB_REPO_NAME,
     source_branch_name=GITHUB_BRANCH,
-    cdk_app_stack_name=main_stack_name,
-    env=env
+    cdk_infra_stack_name=main_stack_name, # This is the MainOrchestratorStack
+    app_bundle_s3_bucket_name=APP_BUNDLE_S3_BUCKET_NAME, # Pass the S3 bucket name
+    env=env,
+    description=f"CI/CD Pipeline for deploying the {main_stack_name} and its application."
 )
+logger.info(f"Pipeline stack '{pipeline_stack_name}' defined.")
 
-app.synth()
+# Synthesize the CDK app
+try:
+    app.synth()
+    logger.info("CDK synthesis successful.")
+except Exception as e:
+    logger.error(f"CDK synthesis failed: {e}", exc_info=True)
+    raise
