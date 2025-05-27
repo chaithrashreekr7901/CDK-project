@@ -22,10 +22,10 @@ phases:
       - cdk deploy "${CDK_INFRA_STACK_NAME}" --require-approval never --outputs-file cdk-deploy-outputs.json
       - echo "CDK infrastructure deployment complete."
 
-  artifacts:
+  artifacts: # <-- Correctly at the top level
     files:
       - cdk-deploy-outputs.json # Optional output
 
-  cache:
+  cache: # <-- Correctly at the top level
     paths:
       - '/root/.npm/**/*'
