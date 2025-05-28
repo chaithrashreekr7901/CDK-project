@@ -30,8 +30,7 @@ artifacts:
       base-directory: app_bundle
       files:
         - '**/*'
-    # Uncomment the following if you also need to output the synthesized CDK templates
-    # CdkTemplatesOutput:
-    #   base-directory: cdk.out
-    #   files:
-    #     - '**/*'
+    CdkTemplatesOutput:
+      base-directory: cdk.out
+      files:
+        - '**/*'
