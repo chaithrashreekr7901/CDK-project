@@ -93,11 +93,14 @@ class PipelineStack(Stack):
                 "phases": {
                     "install": {
                         "runtime-versions": {
-                            "nodejs": "18"
+                            "nodejs": "18",
+                            "python": "3.11"
                         },
                         "commands": [
                             "echo Installing AWS CDK...",
                             "npm install -g aws-cdk",
+                            "echo Installing Python dependencies...",
+                            "pip install -r requirements.txt",
                             "echo Current Git branch:",
                             "git rev-parse --abbrev-ref HEAD || echo Not a git repo"
                         ]
@@ -124,7 +127,8 @@ class PipelineStack(Stack):
                 },
                 "cache": {
                     "paths": [
-                        "/root/.npm/**/*"
+                        "/root/.npm/**/*",
+                        "/root/.cache/pip/**/*"
                     ]
                 }
             }),
