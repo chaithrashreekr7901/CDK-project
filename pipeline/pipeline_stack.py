@@ -7,7 +7,7 @@ from aws_cdk import (
     aws_codepipeline_actions as codepipeline_actions,
     aws_codebuild as codebuild,
     aws_s3 as s3,
-    aws_codedeploy as codedeploy,  # For CodeDeploy resources
+    aws_codedeploy as codedeploy,
     Environment,
 )
 from constructs import Construct
@@ -29,16 +29,9 @@ class PipelineStack(Stack):
         codedeploy_application_name: str,
         codedeploy_deployment_group_name: str,
         env: typing.Optional[Environment] = None,
-        # description: typing.Optional[str] = None,  # Stack does not support 'description' param by default; comment out or remove
         **kwargs,
     ) -> None:
-        # Remove description argument or manage separately if needed
         super().__init__(scope, construct_id, env=env, **kwargs)
-
-        logger.info(
-            f"Initializing PipelineStack '{construct_id}' for deploying infra: {cdk_infra_stack_name} "
-            f"and app via CodeDeploy App: {codedeploy_application_name}, Group: {codedeploy_deployment_group_name}"
-        )
 
         pipeline_artifact_bucket = s3.Bucket(
             self,
@@ -47,7 +40,6 @@ class PipelineStack(Stack):
             auto_delete_objects=True,
             versioned=True,
         )
-        logger.info(f"Pipeline artifact bucket created: {pipeline_artifact_bucket.bucket_name}")
 
         codebuild_execution_role = iam.Role(
             self,
@@ -55,11 +47,13 @@ class PipelineStack(Stack):
             assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
             description="Role for CodeBuild projects",
         )
+
         pipeline_artifact_bucket.grant_read_write(codebuild_execution_role)
+
         codebuild_execution_role.add_to_policy(
             iam.PolicyStatement(
                 actions=["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-                resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/codebuild/{self.stack_name}-*:*"],
+                resources=["*"],
             )
         )
         codebuild_execution_role.add_to_policy(
@@ -69,16 +63,14 @@ class PipelineStack(Stack):
                     "iam:PassRole",
                     "cloudformation:*",
                     "ec2:Describe*",
-                    "s3:*",  # For CDK assets and context
+                    "s3:*",
                     "codedeploy:GetApplication",
                     "codedeploy:GetDeploymentGroup",
                 ],
-                resources=["*"],  # Scope down in production!
+                resources=["*"],
             )
         )
-        logger.info(f"CodeBuild execution role created: {codebuild_execution_role.role_name}")
 
-        # CodeBuild Project for Synth and App Bundling
         build_project = codebuild.PipelineProject(
             self,
             "CdkBuildProject",
@@ -89,17 +81,53 @@ class PipelineStack(Stack):
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
                 privileged=True,
             ),
-            description="CodeBuild project to synthesize CDK app and bundle application.",
         )
-        logger.info(f"CDK Build project created: {build_project.project_name}")
 
-        # CodeBuild Project for Infrastructure Deployment
         infra_deploy_project = codebuild.PipelineProject(
             self,
             "CdkInfraDeployProject",
             project_name=f"{self.stack_name}-InfraDeploy",
             role=codebuild_execution_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_infra_deploy.yml"),
+            build_spec=codebuild.BuildSpec.from_object({
+                "version": "0.2",
+                "phases": {
+                    "install": {
+                        "runtime-versions": {
+                            "nodejs": "18"
+                        },
+                        "commands": [
+                            "echo Installing AWS CDK...",
+                            "npm install -g aws-cdk",
+                            "echo Current Git branch:",
+                            "git rev-parse --abbrev-ref HEAD || echo Not a git repo"
+                        ]
+                    },
+                    "pre_build": {
+                        "commands": [
+                            "echo Available files in build context:",
+                            "find . -type f",
+                            "echo Starting CDK deploy for stack: ${CDK_INFRA_STACK_NAME}"
+                        ]
+                    },
+                    "build": {
+                        "commands": [
+                            "echo Deploying CDK stack: ${CDK_INFRA_STACK_NAME}...",
+                            "cdk deploy ${CDK_INFRA_STACK_NAME} --require-approval never --outputs-file cdk-deploy-outputs.json",
+                            "echo CDK deploy completed."
+                        ]
+                    }
+                },
+                "artifacts": {
+                    "files": [
+                        "cdk-deploy-outputs.json"
+                    ]
+                },
+                "cache": {
+                    "paths": [
+                        "/root/.npm/**/*"
+                    ]
+                }
+            }),
             environment_variables={
                 "CDK_INFRA_STACK_NAME": codebuild.BuildEnvironmentVariable(value=cdk_infra_stack_name)
             },
@@ -107,24 +135,22 @@ class PipelineStack(Stack):
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
                 privileged=True,
             ),
-            description=f"CodeBuild project to deploy CDK infrastructure stack: {cdk_infra_stack_name}.",
         )
-        logger.info(f"CDK Infra Deploy project created: {infra_deploy_project.project_name}")
 
-        # Pipeline Artifacts
         source_output_artifact = codepipeline.Artifact("SourceCodeOutput")
         cdk_templates_artifact = codepipeline.Artifact("CdkTemplatesOutput")
         application_bundle_artifact = codepipeline.Artifact("AppBundleOutput")
 
-        # CodePipeline Role
         pipeline_execution_role = iam.Role(
             self,
             "CodePipelineExecutionRole",
             assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
             description="Role for CodePipeline to orchestrate stages and actions",
         )
+
         pipeline_artifact_bucket.grant_read_write(pipeline_execution_role)
         codebuild_execution_role.grant_pass_role(pipeline_execution_role)
+
         pipeline_execution_role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
@@ -144,12 +170,10 @@ class PipelineStack(Stack):
                     "codedeploy:GetDeploymentGroup",
                     "codedeploy:RegisterApplicationRevision",
                 ],
-                resources=["*"],  # Scope down if possible
+                resources=["*"],
             )
         )
-        logger.info(f"CodePipeline execution role created: {pipeline_execution_role.role_name}")
 
-        # Reference existing CodeDeploy Application and Deployment Group
         cd_application = codedeploy.ServerApplication.from_server_application_name(
             self, "ImportedCodeDeployApplication", server_application_name=codedeploy_application_name
         )
@@ -159,11 +183,7 @@ class PipelineStack(Stack):
             application=cd_application,
             deployment_group_name=codedeploy_deployment_group_name,
         )
-        logger.info(
-            f"Referencing CodeDeploy App: {cd_application.application_name}, Group: {cd_deployment_group.deployment_group_name}"
-        )
 
-        # Define Pipeline
         pipeline = codepipeline.Pipeline(
             self,
             "CdkAppWithDirectCodeDeployPipeline",
@@ -201,7 +221,7 @@ class PipelineStack(Stack):
                         codepipeline_actions.CodeBuildAction(
                             action_name=f"Deploy_Infra_{cdk_infra_stack_name.replace('-', '_')}",
                             project=infra_deploy_project,
-                            input=source_output_artifact,
+                            input=source_output_artifact,  # ✅ Full source so inline buildspec works
                         )
                     ],
                 ),
@@ -217,7 +237,6 @@ class PipelineStack(Stack):
                 ),
             ],
         )
-        logger.info(f"CodePipeline '{pipeline.pipeline_name}' created with direct CodeDeploy action.")
 
         cdk.CfnOutput(self, "PipelineNameOutput", value=pipeline.pipeline_name)
         cdk.CfnOutput(self, "PipelineArnOutput", value=pipeline.pipeline_arn)
