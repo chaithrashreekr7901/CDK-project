@@ -1,89 +1,25 @@
 version: 0.2
 
-# The 'env.variables' section has been removed from here.
-# Environment variables like APP_BUNDLE_S3_BUCKET and AWS_REGION are expected
-# to be injected directly into the CodeBuild job's environment by the
-# PipelineStack.py definition of the CdkSynthAndBundleProject.
-
 phases:
   install:
     runtime-versions:
-      nodejs: 18 # Or your preferred Node.js version for CDK and/or your app
-      # python: 3.11 # Uncomment and adjust if your CDK app is Python
+      python: 3.11
     commands:
-      - echo "Installing CDK globally"
       - npm install -g aws-cdk
-      # If your CDK app is Python:
-      # - echo "Installing Python dependencies for CDK app"
-      # - pip install -r requirements.txt # Or your specific CDK app requirements file
-      # If your CDK app is TypeScript/JavaScript:
-      # - echo "Installing Node.js dependencies for CDK app"
-      # - npm ci # Or yarn install
+      - pip install -r requirements.txt
 
   pre_build:
     commands:
-      - echo "Starting CDK synth for MyMainInfrastructureStack and application bundling"
-      - echo "App Bundle S3 Bucket (from Project Env): ${APP_BUNDLE_S3_BUCKET}"
-      - echo "AWS Region (from Project Env): ${AWS_REGION}"
-      - |
-        if [ -z "${APP_BUNDLE_S3_BUCKET}" ] || [ -z "${AWS_REGION}" ]; then
-          echo "Error: APP_BUNDLE_S3_BUCKET or AWS_REGION environment variables are not set in the CodeBuild project."
-          echo "These should be configured in PipelineStack.py when defining the CdkSynthAndBundleProject."
-          exit 1
-        fi
+      - echo "Synthesizing the CDK stack..."
+      - cdk synth MyMainInfrastructureStack
 
   build:
     commands:
-      # Ensure all these list items (-) start at the SAME indentation level.
-      - echo "Running cdk synth for MyMainInfrastructureStack..."
-      # Updated synth command as requested:
-      - cdk synth MyMainInfrastructureStack # Output goes to cdk.out/
-      - echo "CDK synth for MyMainInfrastructureStack complete. cdk.out/ directory is ready for primary artifact."
+      - echo "Bundling application artifacts..."
+      - mkdir -p app_bundle
+      - cp -r path/to/your/app/* app_bundle/
 
-      - echo "Creating application bundle (app_bundle.zip)..."
-      - mkdir app_bundle_temp_dir # Temporary directory for bundling
-      - | # Start of multi-line command for copying application_source
-        if [ -d "application_source" ]; then
-          cp -r application_source/* app_bundle_temp_dir/
-        else
-          echo "Warning: 'application_source' directory not found. Application bundle might be empty or incomplete."
-        fi
-      - | # Start of multi-line command for copying appspec.yml
-        if [ -f "appspec.yml" ]; then
-          cp appspec.yml app_bundle_temp_dir/
-        else
-          echo "Error: appspec.yml not found at the root of the repository."
-          echo "This file is required for CodeDeploy. Failing build."
-          exit 1
-        fi
-      
-      # Create the zip file in the root of the CodeBuild source directory
-      # This will be picked up by the secondary artifact definition below.
-      - (cd app_bundle_temp_dir && zip -r ../app_bundle.zip .)
-      - echo "app_bundle.zip created successfully in the root build directory."
-
-# ARTIFACTS section is a TOP-LEVEL key (same indentation as 'version', 'phases')
 artifacts:
-  # Primary Artifact (CDK Templates for MyMainInfrastructureStack)
-  # This will be mapped to 'cdk_templates_artifact' in PipelineStack.py
   files:
-    - '**/*' # Include all files and subdirectories from cdk.out
-  base-directory: 'cdk.out' 
-
-  # Secondary Artifact (Application Bundle)
-  # This will be mapped to 'application_bundle_artifact' in PipelineStack.py
-  # The identifier 'AppBundleOutput' MUST match the 'artifact_name' property
-  # of the second codepipeline.Artifact object in the CodeBuildAction's 'outputs' list
-  # in your pipeline/pipeline_stack.py file.
-  secondary-artifacts:
-    AppBundleOutput: # This is the identifier.
-      files:
-        - app_bundle.zip # The zip file created in the build phase
-      base-directory: '.' # Specifies that app_bundle.zip is in the root of the CodeBuild source directory
-      name: ApplicationBundleArtifact_$(date +%Y-%m-%d_%H-%M-%S) # Optional: S3 artifact name formatting
-
-# CACHE section is a TOP-LEVEL key (same indentation as 'version', 'phases', 'artifacts')
-cache:
-  paths:
-    - '/root/.npm/**/*' # Cache npm packages for faster subsequent builds
-    # - '/root/.cache/pip/**/*' # Cache pip packages if using Python
+    - '**/*'
+  base-directory: app_bundle
