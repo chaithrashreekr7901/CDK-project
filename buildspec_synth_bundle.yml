@@ -5,21 +5,27 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - npm install -g aws-cdk
-      - pip install -r requirements.txt
-
+      - echo Installing dependencies...
+      - pip install -r requirements.txt -t python/
   pre_build:
     commands:
-      - echo "Synthesizing the CDK stack..."
-      - cdk synth MyMainInfrastructureStack
-
+      - echo Pre-build phase complete.
   build:
     commands:
       - echo "Bundling application artifacts..."
       - mkdir -p app_bundle
-      - cp -r flask_app/* app_bundle/
+      - cp app.py app_bundle/
+      - cp requirements.txt app_bundle/
+      - echo "Bundle created successfully."
+  post_build:
+    commands:
+      - echo "Build completed on `date`"
 
 artifacts:
   files:
     - '**/*'
-  base-directory: app_bundle
+  secondary-artifacts:
+    CdkTemplatesOutput:
+      base-directory: app_bundle
+      files:
+        - '**/*'
