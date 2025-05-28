@@ -201,7 +201,7 @@ class PipelineStack(Stack):
                         codepipeline_actions.CodeBuildAction(
                             action_name=f"Deploy_Infra_{cdk_infra_stack_name.replace('-', '_')}",
                             project=infra_deploy_project,
-                            input=cdk_templates_artifact,
+                            input=source_output_artifact,
                         )
                     ],
                 ),
