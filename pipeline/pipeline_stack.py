@@ -71,76 +71,13 @@ class PipelineStack(Stack):
             )
         )
 
+        # Single build project that does synth + deploy using buildspec_synth_bundle.yml
         build_project = codebuild.PipelineProject(
             self,
-            "CdkBuildProject",
-            project_name=f"{self.stack_name}-Build",
+            "CdkBuildAndDeployProject",
+            project_name=f"{self.stack_name}-BuildAndDeploy",
             role=codebuild_execution_role,
             build_spec=codebuild.BuildSpec.from_source_filename("buildspec_synth_bundle.yml"),
-            environment=codebuild.BuildEnvironment(
-                build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
-                privileged=True,
-            ),
-        )
-
-        infra_deploy_project = codebuild.PipelineProject(
-            self,
-            "CdkInfraDeployProject",
-            project_name=f"{self.stack_name}-InfraDeploy",
-            role=codebuild_execution_role,
-            build_spec=codebuild.BuildSpec.from_object({
-    "version": "0.2",
-    "phases": {
-        "install": {
-            "runtime-versions": {
-                "nodejs": "18",
-                "python": "3.11"
-            },
-            "commands": [
-                "echo Installing AWS CDK...",
-                "npm install -g aws-cdk",
-                "echo Setting up Python virtual environment...",
-                "python -m venv .venv",
-                "source .venv/bin/activate",
-                "echo Installing Python dependencies...",
-                "pip install -r requirements.txt",
-                "echo Current Git branch:",
-                "git rev-parse --abbrev-ref HEAD || echo Not a git repo"
-            ]
-        },
-        "pre_build": {
-            "commands": [
-                "source .venv/bin/activate",
-                "echo Available files in build context:",
-                "find . -type f",
-                "echo Starting CDK deploy for stack: ${CDK_INFRA_STACK_NAME}"
-            ]
-        },
-        "build": {
-            "commands": [
-                "source .venv/bin/activate",
-                "echo Deploying CDK stack: ${CDK_INFRA_STACK_NAME}...",
-                'cdk deploy "${CDK_INFRA_STACK_NAME}" --require-approval never --outputs-file cdk-deploy-outputs.json',
-                "echo CDK deploy completed."
-            ]
-        }
-    },
-    "artifacts": {
-        "files": [
-            "cdk-deploy-outputs.json"
-        ]
-    },
-    "cache": {
-        "paths": [
-            "/root/.npm/**/*",
-            "/root/.cache/pip/**/*"
-        ]
-    }
-}),
-
-            environment_variables={
-                "CDK_INFRA_STACK_NAME": codebuild.BuildEnvironmentVariable(value=cdk_infra_stack_name)
-            },
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
                 privileged=True,
@@ -215,23 +152,13 @@ class PipelineStack(Stack):
                     ],
                 ),
                 codepipeline.StageProps(
-                    stage_name="Build",
+                    stage_name="Build_And_Deploy",
                     actions=[
                         codepipeline_actions.CodeBuildAction(
-                            action_name="CDK_Synth_And_App_Bundle",
+                            action_name="CDK_Synth_And_Deploy",
                             project=build_project,
                             input=source_output_artifact,
                             outputs=[cdk_templates_artifact, application_bundle_artifact],
-                        )
-                    ],
-                ),
-                codepipeline.StageProps(
-                    stage_name="Deploy_Infrastructure",
-                    actions=[
-                        codepipeline_actions.CodeBuildAction(
-                            action_name=f"Deploy_Infra_{cdk_infra_stack_name.replace('-', '_')}",
-                            project=infra_deploy_project,
-                            input=source_output_artifact,  # ✅ Full source so inline buildspec works
                         )
                     ],
                 ),
