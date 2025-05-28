@@ -16,14 +16,14 @@ phases:
       - mkdir -p app_bundle
       - cp app.py app_bundle/
       - cp requirements.txt app_bundle/
-      - echo "Bundle created successfully."
+      - cp -r pipeline app_bundle/
+      - cp -r vpc app_bundle/
+      - cp -r cdk_project app_bundle/
   post_build:
     commands:
       - echo "Build completed on `date`"
 
 artifacts:
-  files:
-    - '**/*'
   secondary-artifacts:
     CdkTemplatesOutput:
       base-directory: app_bundle
