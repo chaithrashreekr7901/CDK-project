@@ -99,7 +99,7 @@ class PipelineStack(Stack):
             "CdkInfraDeployProject",
             project_name=f"{self.stack_name}-InfraDeploy",
             role=codebuild_execution_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_deploy.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_infra_deploy.yml"),
             environment_variables={
                 "CDK_INFRA_STACK_NAME": codebuild.BuildEnvironmentVariable(value=cdk_infra_stack_name)
             },
