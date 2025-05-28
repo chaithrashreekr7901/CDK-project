@@ -7,8 +7,6 @@ from aws_cdk import (
     aws_codepipeline_actions as codepipeline_actions,
     aws_codebuild as codebuild,
     aws_s3 as s3,
-    aws_codedeploy as codedeploy,
-    aws_cloudformation as cloudformation,
     Environment,
 )
 from constructs import Construct
@@ -24,8 +22,6 @@ class PipelineStack(Stack):
         source_repo_name: str,
         source_branch_name: str,
         cdk_infra_stack_name: str,
-        codedeploy_application_name: str,
-        codedeploy_deployment_group_name: str,
         env: typing.Optional[Environment] = None,
         **kwargs,
     ) -> None:
@@ -73,16 +69,6 @@ class PipelineStack(Stack):
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
         app_bundle_output = codepipeline.Artifact("AppBundleOutput")
 
-        # CodeDeploy app and deployment group
-        codedeploy_app = codedeploy.ServerApplication.from_server_application_name(
-            self, "CDApp", server_application_name=codedeploy_application_name
-        )
-        codedeploy_group = codedeploy.ServerDeploymentGroup.from_server_deployment_group_attributes(
-            self, "CDGroup",
-            application=codedeploy_app,
-            deployment_group_name=codedeploy_deployment_group_name
-        )
-
         # Pipeline definition
         pipeline = codepipeline.Pipeline(
             self,
@@ -125,16 +111,6 @@ class PipelineStack(Stack):
                             admin_permissions=True,
                         )
                     ],
-                ),
-                codepipeline.StageProps(
-                    stage_name="Deploy_Application",
-                    actions=[
-                        codepipeline_actions.CodeDeployServerDeployAction(
-                            action_name="CodeDeployAppToEC2",
-                            deployment_group=codedeploy_group,
-                            input=app_bundle_output
-                        )
-                    ]
                 )
             ]
         )
