@@ -22,7 +22,7 @@ phases:
 
   pre_build:
     commands:
-      - echo "Starting CDK synth and application bundling"
+      - echo "Starting CDK synth for MyMainInfrastructureStack and application bundling"
       # These environment variables are expected to be set by the CodeBuild project configuration
       # (passed from PipelineStack.py)
       - echo "App Bundle S3 Bucket (from Project Env): ${APP_BUNDLE_S3_BUCKET}"
@@ -37,22 +37,20 @@ phases:
   build:
     commands:
       # Ensure all these list items (-) start at the SAME indentation level.
-      # Line 29 in this snippet (corresponds to your line 29/30 area)
-      - echo "Running cdk synth..."
-      # Line 30 in this snippet
-      - cdk synth # Output goes to cdk.out/ by default
-      # Line 31 in this snippet - THIS LINE MUST HAVE THE SAME INDENTATION AS THE LINE ABOVE
-      - echo "CDK synth complete. cdk.out/ directory is ready for primary artifact."
+      - echo "Running cdk synth for MyMainInfrastructureStack..."
+      # Updated synth command as requested:
+      - cdk synth MyMainInfrastructureStack # Output goes to cdk.out/
+      - echo "CDK synth for MyMainInfrastructureStack complete. cdk.out/ directory is ready for primary artifact."
 
       - echo "Creating application bundle (app_bundle.zip)..."
       - mkdir app_bundle_temp_dir # Temporary directory for bundling
-      - |
+      - | # Start of multi-line command for copying application_source
         if [ -d "application_source" ]; then
           cp -r application_source/* app_bundle_temp_dir/
         else
           echo "Warning: 'application_source' directory not found. Application bundle might be empty or incomplete."
         fi
-      - |
+      - | # Start of multi-line command for copying appspec.yml
         if [ -f "appspec.yml" ]; then
           cp appspec.yml app_bundle_temp_dir/
         else
@@ -68,12 +66,17 @@ phases:
 
 # ARTIFACTS section is a TOP-LEVEL key (same indentation as 'version', 'phases')
 artifacts:
-  # Primary Artifact (CDK Templates - maps to 'cdk_templates_artifact' in PipelineStack)
+  # Primary Artifact (CDK Templates for MyMainInfrastructureStack)
+  # This will be mapped to 'cdk_templates_artifact' in PipelineStack.py
   files:
-    - '**/*' # Include all files and subdirectories
-  base-directory: 'cdk.out' # Root directory for this artifact is cdk.out/
+    - '**/*' # Include all files and subdirectories from cdk.out
+  base-directory: 'cdk.out' 
 
-  # Secondary Artifact (Application Bundle - maps to 'application_bundle_artifact' in PipelineStack)
+  # Secondary Artifact (Application Bundle)
+  # This will be mapped to 'application_bundle_artifact' in PipelineStack.py
+  # The identifier 'AppBundleOutput' MUST match the 'artifact_name' property
+  # of the second codepipeline.Artifact object in the CodeBuildAction's 'outputs' list
+  # in your pipeline/pipeline_stack.py file.
   secondary-artifacts:
     AppBundleOutput: # This is the identifier.
       files:
