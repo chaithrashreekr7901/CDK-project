@@ -89,49 +89,55 @@ class PipelineStack(Stack):
             project_name=f"{self.stack_name}-InfraDeploy",
             role=codebuild_execution_role,
             build_spec=codebuild.BuildSpec.from_object({
-                "version": "0.2",
-                "phases": {
-                    "install": {
-                        "runtime-versions": {
-                            "nodejs": "18",
-                            "python": "3.11"
-                        },
-                        "commands": [
-                            "echo Installing AWS CDK...",
-                            "npm install -g aws-cdk",
-                            "echo Installing Python dependencies...",
-                            "pip install -r requirements.txt",
-                            "echo Current Git branch:",
-                            "git rev-parse --abbrev-ref HEAD || echo Not a git repo"
-                        ]
-                    },
-                    "pre_build": {
-                        "commands": [
-                            "echo Available files in build context:",
-                            "find . -type f",
-                            "echo Starting CDK deploy for stack: ${CDK_INFRA_STACK_NAME}"
-                        ]
-                    },
-                    "build": {
-                        "commands": [
-                            "echo Deploying CDK stack: ${CDK_INFRA_STACK_NAME}...",
-                            "cdk deploy ${CDK_INFRA_STACK_NAME} --require-approval never --outputs-file cdk-deploy-outputs.json",
-                            "echo CDK deploy completed."
-                        ]
-                    }
-                },
-                "artifacts": {
-                    "files": [
-                        "cdk-deploy-outputs.json"
-                    ]
-                },
-                "cache": {
-                    "paths": [
-                        "/root/.npm/**/*",
-                        "/root/.cache/pip/**/*"
-                    ]
-                }
-            }),
+    "version": "0.2",
+    "phases": {
+        "install": {
+            "runtime-versions": {
+                "nodejs": "18",
+                "python": "3.11"
+            },
+            "commands": [
+                "echo Installing AWS CDK...",
+                "npm install -g aws-cdk",
+                "echo Setting up Python virtual environment...",
+                "python -m venv .venv",
+                "source .venv/bin/activate",
+                "echo Installing Python dependencies...",
+                "pip install -r requirements.txt",
+                "echo Current Git branch:",
+                "git rev-parse --abbrev-ref HEAD || echo Not a git repo"
+            ]
+        },
+        "pre_build": {
+            "commands": [
+                "source .venv/bin/activate",
+                "echo Available files in build context:",
+                "find . -type f",
+                "echo Starting CDK deploy for stack: ${CDK_INFRA_STACK_NAME}"
+            ]
+        },
+        "build": {
+            "commands": [
+                "source .venv/bin/activate",
+                "echo Deploying CDK stack: ${CDK_INFRA_STACK_NAME}...",
+                'cdk deploy "${CDK_INFRA_STACK_NAME}" --require-approval never --outputs-file cdk-deploy-outputs.json',
+                "echo CDK deploy completed."
+            ]
+        }
+    },
+    "artifacts": {
+        "files": [
+            "cdk-deploy-outputs.json"
+        ]
+    },
+    "cache": {
+        "paths": [
+            "/root/.npm/**/*",
+            "/root/.cache/pip/**/*"
+        ]
+    }
+}),
+
             environment_variables={
                 "CDK_INFRA_STACK_NAME": codebuild.BuildEnvironmentVariable(value=cdk_infra_stack_name)
             },
