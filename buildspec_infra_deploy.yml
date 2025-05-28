@@ -7,9 +7,13 @@ phases:
     commands:
       - echo "Installing AWS CDK..."
       - npm install -g aws-cdk
+      - echo "Current Git branch:"
+      - git rev-parse --abbrev-ref HEAD || echo "Not a git repo"
 
   pre_build:
     commands:
+      - echo "Available files in build context:"
+      - find . -type f
       - echo "Starting CDK deploy for stack: ${CDK_INFRA_STACK_NAME}"
 
   build:
