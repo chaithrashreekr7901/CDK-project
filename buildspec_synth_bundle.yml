@@ -4,9 +4,6 @@ version: 0.2
 # Environment variables like APP_BUNDLE_S3_BUCKET and AWS_REGION are expected
 # to be injected directly into the CodeBuild job's environment by the
 # PipelineStack.py definition of the CdkSynthAndBundleProject.
-# If you had other subsections for 'env' like 'parameter-store' or 'secrets-manager',
-# the 'env:' key would remain with those subsections. If 'variables' was the ONLY
-# sub-key under 'env' and it became empty, the entire 'env:' section can be omitted.
 
 phases:
   install:
@@ -39,8 +36,12 @@ phases:
 
   build:
     commands:
+      # Ensure all these list items (-) start at the SAME indentation level.
+      # Line 29 in this snippet (corresponds to your line 29/30 area)
       - echo "Running cdk synth..."
+      # Line 30 in this snippet
       - cdk synth # Output goes to cdk.out/ by default
+      # Line 31 in this snippet - THIS LINE MUST HAVE THE SAME INDENTATION AS THE LINE ABOVE
       - echo "CDK synth complete. cdk.out/ directory is ready for primary artifact."
 
       - echo "Creating application bundle (app_bundle.zip)..."
@@ -68,16 +69,11 @@ phases:
 # ARTIFACTS section is a TOP-LEVEL key (same indentation as 'version', 'phases')
 artifacts:
   # Primary Artifact (CDK Templates - maps to 'cdk_templates_artifact' in PipelineStack)
-  # CodePipeline's CodeBuildAction maps the first item in its 'outputs' list
-  # to this primary artifact definition.
   files:
     - '**/*' # Include all files and subdirectories
   base-directory: 'cdk.out' # Root directory for this artifact is cdk.out/
 
   # Secondary Artifact (Application Bundle - maps to 'application_bundle_artifact' in PipelineStack)
-  # The 'identifier' here ('AppBundleOutput') MUST match the 'artifact_name' property
-  # of the second codepipeline.Artifact object in the CodeBuildAction's 'outputs' list
-  # in your pipeline/pipeline_stack.py file.
   secondary-artifacts:
     AppBundleOutput: # This is the identifier.
       files:
