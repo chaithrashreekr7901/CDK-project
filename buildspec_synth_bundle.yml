@@ -23,8 +23,6 @@ phases:
   pre_build:
     commands:
       - echo "Starting CDK synth for MyMainInfrastructureStack and application bundling"
-      # These environment variables are expected to be set by the CodeBuild project configuration
-      # (passed from PipelineStack.py)
       - echo "App Bundle S3 Bucket (from Project Env): ${APP_BUNDLE_S3_BUCKET}"
       - echo "AWS Region (from Project Env): ${AWS_REGION}"
       - |
