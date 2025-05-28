@@ -1,0 +1,27 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 18
+    commands:
+      - echo "Installing AWS CDK..."
+      - npm install -g aws-cdk
+
+  pre_build:
+    commands:
+      - echo "Starting CDK deploy for stack: ${CDK_INFRA_STACK_NAME}"
+
+  build:
+    commands:
+      - echo "Deploying CDK stack: ${CDK_INFRA_STACK_NAME}..."
+      - cdk deploy "${CDK_INFRA_STACK_NAME}" --require-approval never --outputs-file cdk-deploy-outputs.json
+      - echo "CDK deploy completed."
+
+artifacts:
+  files:
+    - cdk-deploy-outputs.json
+
+cache:
+  paths:
+    - '/root/.npm/**/*'
