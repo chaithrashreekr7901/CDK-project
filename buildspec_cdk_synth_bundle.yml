@@ -14,7 +14,7 @@ phases:
   pre_build:
     commands:
       - echo "Synthesizing the CDK app..."
-      - cdk synth MyMainInfrastructureStack > template.yaml
+      - cdk synth MyMainInfrastructureStack --output cdk.out
 
   build:
     commands:
@@ -29,6 +29,6 @@ artifacts:
       files:
         - '**/*'
     CdkTemplatesOutput:
-      base-directory: .
+      base-directory: cdk.out
       files:
-        - template.yaml
+        - '**/*'
