@@ -36,12 +36,18 @@ class PipelineStack(Stack):
             self, "PipelineArtifactsBucket",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
-            versioned=True
+            versioned=True,
+            block_public_access=s3.BlockPublicAccess(
+                block_public_acls=True,
+                block_public_policy=False,  # ✅ This must be false to allow policies
+                ignore_public_acls=True,
+                restrict_public_buckets=False
         )
+    )
         artifact_bucket.add_to_resource_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
-                principals=[iam.ArnPrincipal("*")], 
+                principals=[iam.ArnPrincipal("arn:aws:iam::198484116691:role/cdk-hnb659fds-cfn-exec-role-198484116691-us-east-1")], 
                 actions=[
                     "s3:GetObject",
                     "s3:GetObjectVersion",
