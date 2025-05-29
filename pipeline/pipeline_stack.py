@@ -38,6 +38,21 @@ class PipelineStack(Stack):
             auto_delete_objects=True,
             versioned=True
         )
+        artifact_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
+                actions=[
+                    "s3:GetObject",
+                    "s3:GetObjectVersion",
+                    "s3:ListBucket"
+                ],
+                resources=[
+                    artifact_bucket.bucket_arn,
+                    f"{artifact_bucket.bucket_arn}/*"
+                ],
+            )
+        )
 
         # IAM Roles
         codebuild_role = iam.Role(
