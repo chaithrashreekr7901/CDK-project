@@ -27,20 +27,22 @@ class PipelineStack(Stack):
     ) -> None:
         super().__init__(scope, construct_id, env=env, **kwargs)
 
-        # Artifact S3 bucket
+        # Artifact S3 bucket with the modified public access setting
         artifact_bucket = s3.Bucket(
             self, "PipelineArtifactsBucket",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
-            versioned=True
+            versioned=True,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ACLS  # Allow ACLs only, avoid full public access
         )
 
-        # Explicit Bucket Policy to allow CloudFormation and CodePipeline access
+        # Ensure CloudFormation can modify the bucket policy
         artifact_bucket.add_to_resource_policy(
             iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:PutObject"],
-                resources=[f"{artifact_bucket.bucket_arn}/*"],
-                principals=[iam.ArnPrincipal("*")]  # Allow everyone, or more restrictive as needed
+                actions=["s3:PutBucketPolicy"],
+                resources=[artifact_bucket.bucket_arn],
+                effect=iam.Effect.ALLOW,
+                principals=[iam.ArnPrincipal("*")]  # Allow CloudFormation to modify bucket policy
             )
         )
 
@@ -59,10 +61,6 @@ class PipelineStack(Stack):
                 iam.ManagedPolicy.from_aws_managed_policy_name("AWSCodePipelineCustomActionAccess")
             ]
         )
-
-        # Allow CodePipeline and CodeBuild to access the S3 bucket
-        artifact_bucket.grant_read_write(pipeline_role)
-        artifact_bucket.grant_read_write(codebuild_role)
 
         # Build Project: Synth + Bundle
         build_project = codebuild.PipelineProject(
