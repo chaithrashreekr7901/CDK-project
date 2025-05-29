@@ -39,6 +39,19 @@ class PipelineStack(Stack):
             versioned=True
         )
 
+        # Adding S3 Bucket Policy for CodePipeline, CodeBuild, and CloudFormation to access the artifact bucket
+        artifact_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+                resources=[
+                    artifact_bucket.bucket_arn,
+                    f"{artifact_bucket.bucket_arn}/*",
+                ],
+                effect=iam.Effect.ALLOW,
+                principals=[iam.ArnPrincipal("*")],
+            )
+        )
+
         # IAM Roles
         codebuild_role = iam.Role(
             self, "CodeBuildRole",
