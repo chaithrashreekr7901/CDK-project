@@ -197,21 +197,14 @@ class PipelineStack(Stack):
                         codepipeline_actions.CloudFormationCreateUpdateStackAction(
                             action_name=f"Deploy_CFN_{cdk_infra_stack_name.replace('-', '_')}",
                             stack_name=cdk_infra_stack_name,
-                            # Template path expects <ArtifactName>::<JSONFilePath>
                             template_path=cdk_templates_artifact.at_path(f"{cdk_infra_stack_name}.template.json"),
-                            admin_permissions=False, # Set to False as we provide a specific deployment_role
-                            deployment_role=cfn_stack_deployment_role, # Pass the explicitly created role
-                            capabilities=[
-                                cdk.CfnCapabilities.NAMED_IAM,    # If stack creates IAM resources
-                                cdk.CfnCapabilities.AUTO_EXPAND   # For nested stacks or macros
-                            ],
-                            # If MyMainInfrastructureStack has parameters that are NOT resolved by context
-                            # but need to be passed from pipeline, use parameter_overrides.
-                            # The S3 bundle parameters are now handled by CodeDeploy action directly.
-                            # parameter_overrides={
-                            # "MyParameter": cdk_templates_artifact.get_param("file.json", "MyParamKey") # Example
-                            # },
-                            # extra_inputs=[application_bundle_artifact] # If params are derived from app bundle
+                            admin_permissions=False,
+                            deployment_role=cfn_stack_deployment_role,
+                            # Corrected parameter name:
+                            cfn_capabilities=[ # Changed from 'capabilities'
+                                cdk.CfnCapabilities.NAMED_IAM,
+                                cdk.CfnCapabilities.AUTO_EXPAND
+                            ]
                         )
                     ]
                 ),
@@ -221,7 +214,7 @@ class PipelineStack(Stack):
                         codepipeline_actions.CodeDeployServerDeployAction(
                             action_name="Deploy_App_To_EC2_Via_CodeDeploy",
                             deployment_group=cd_deployment_group,
-                            input=application_bundle_artifact # Contains appspec.yml and app files
+                            input=application_bundle_artifact
                         )
                     ]
                 )
