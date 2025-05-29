@@ -5,130 +5,180 @@ from aws_cdk import (
     aws_iam as iam,
     aws_codepipeline as codepipeline,
     aws_codepipeline_actions as codepipeline_actions,
-    aws_codebuild as codebuild,
+    aws_codebuild as codebuild, # Still needed for the Build stage
     aws_s3 as s3,
     aws_codedeploy as codedeploy,
-    aws_cloudformation as cloudformation,
-    Environment,
+    Environment
 )
 from constructs import Construct
+import logging
 import typing
 
-class PipelineStack(Stack):
-    def __init__(
-        self,
-        scope: Construct,
-        construct_id: str,
-        source_connection_arn: str,
-        source_repo_owner: str,
-        source_repo_name: str,
-        source_branch_name: str,
-        cdk_infra_stack_name: str,
-        codedeploy_application_name: str,
-        codedeploy_deployment_group_name: str,
-        env: typing.Optional[Environment] = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(scope, construct_id, env=env, **kwargs)
+logger = logging.getLogger(__name__)
 
-        # Artifact S3 bucket
-        artifact_bucket = s3.Bucket(
-            self, "PipelineArtifactsBucket",
+class PipelineStack(Stack):
+    def __init__(self, scope: Construct, construct_id: str,
+                 source_connection_arn: str,
+                 source_repo_owner: str,
+                 source_repo_name: str,
+                 source_branch_name: str,
+                 cdk_infra_stack_name: str, # This is MyMainInfrastructureStack
+                 codedeploy_application_name: str,
+                 codedeploy_deployment_group_name: str,
+                 env: typing.Optional[Environment] = None,
+                 description: typing.Optional[str] = None,
+                 **kwargs) -> None:
+        super().__init__(scope, construct_id, env=env, description=description, **kwargs)
+
+        logger.info(f"Initializing PipelineStack '{construct_id}' for deploying infra: {cdk_infra_stack_name} "
+                    f"and app via CodeDeploy App: {codedeploy_application_name}, Group: {codedeploy_deployment_group_name}")
+
+        pipeline_artifact_bucket = s3.Bucket(
+            self, "PipelineStageArtifactBucket",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
-            versioned=True,
-            block_public_access=s3.BlockPublicAccess(
-                block_public_acls=True,
-                block_public_policy=False,  # ✅ This must be false to allow policies
-                ignore_public_acls=True,
-                restrict_public_buckets=False
+            versioned=True
         )
-    )
-        artifact_bucket.add_to_resource_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                principals=[iam.ArnPrincipal("arn:aws:iam::198484116691:role/cdk-hnb659fds-cfn-exec-role-198484116691-us-east-1")], 
-                actions=[
-                    "s3:GetObject",
-                    "s3:GetObjectVersion",
-                    "s3:ListBucket"
-                ],
-                resources=[
-                    artifact_bucket.bucket_arn,
-                    f"{artifact_bucket.bucket_arn}/*"
-                ],
-                conditions={
-                    "StringEquals": {
-                    "aws:PrincipalService": "cloudformation.amazonaws.com"
-                    }
-                }       
-            )
-        )
+        logger.info(f"Pipeline stage artifact bucket created: {pipeline_artifact_bucket.bucket_name}")
 
-        # IAM Roles
-        codebuild_role = iam.Role(
-            self, "CodeBuildRole",
+        # --- Role for CodeBuild Projects ---
+        codebuild_execution_role = iam.Role(
+            self, "CodeBuildExecutionRole",
             assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
-            ]
+            description="Role for CodeBuild projects (Synth & Bundle)"
         )
-        pipeline_role = iam.Role(
-            self, "CodePipelineRole",
-            assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
-            ]
-        )
+        pipeline_artifact_bucket.grant_read_write(codebuild_execution_role)
+        codebuild_execution_role.add_to_policy(iam.PolicyStatement(
+            actions=["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+            resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/codebuild/{self.stack_name}-Build:*"] # More specific
+        ))
+        # Permissions for CDK Synth
+        codebuild_execution_role.add_to_policy(iam.PolicyStatement(
+            actions=["sts:AssumeRole"], # For CDK to assume lookup roles if context lookups are needed
+            resources=["*"] # Scoped down if specific lookup roles are known
+        ))
+        codebuild_execution_role.add_to_policy(iam.PolicyStatement(
+            actions=["ec2:DescribeAvailabilityZones", "ec2:DescribeRegions"], # Common CDK context lookups
+            resources=["*"]
+        ))
+        logger.info(f"CodeBuild execution role created: {codebuild_execution_role.role_name}")
 
-        # Build Project: Synth + Bundle
+        # --- CodeBuild Project for Synth and App Bundling ---
         build_project = codebuild.PipelineProject(
-            self,
-            "CdkSynthAndBundleProject",
-            project_name=f"{self.stack_name}-SynthAndBundle",
-            role=codebuild_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_cdk_synth_bundle.yml"),
+            self, "CdkBuildProject",
+            project_name=f"{self.stack_name}-BuildAndBundle", # Renamed
+            role=codebuild_execution_role,
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_synth_bundle.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
-                privileged=True,
+                privileged=True
             ),
+            description="CodeBuild project to synthesize CDK app and bundle application."
+        )
+        logger.info(f"CDK Build project created: {build_project.project_name}")
+
+        # --- Role for CloudFormation to deploy MyMainInfrastructureStack ---
+        cfn_stack_deployment_role = iam.Role(
+            self, "MainStackCfnDeploymentRole",
+            assumed_by=iam.ServicePrincipal("cloudformation.amazonaws.com"),
+            description=f"Role assumed by CloudFormation to deploy {cdk_infra_stack_name}"
         )
 
-        # Artifacts
-        source_output = codepipeline.Artifact("SourceCode")
-        cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
-        app_bundle_output = codepipeline.Artifact("AppBundleOutput")
+        # 1. Grant CFN role permission to read the template from the pipeline artifact bucket
+        pipeline_artifact_bucket.grant_read(cfn_stack_deployment_role)
 
-        # CodeDeploy app and deployment group
-        codedeploy_app = codedeploy.ServerApplication.from_server_application_name(
-            self, "CDApp", server_application_name=codedeploy_application_name
+        # 2. Grant CFN role permission to read nested stack templates from the CDK bootstrap assets S3 bucket
+        #    The CDK bootstrap bucket name typically follows a pattern.
+        #    'hnb659fds' is a qualifier; if you used a different one during bootstrap, update it.
+        #    If you did not use a qualifier, the bucket name is simpler: cdk-assets-${AWS::AccountId}-${AWS::Region}
+        #    For safety, let's assume the qualifier is present.
+        cdk_bootstrap_assets_bucket_name = f"cdk-hnb659fds-assets-{self.account}-{self.region}"
+        cdk_bootstrap_assets_bucket = s3.Bucket.from_bucket_name(self, "CdkBootstrapAssetsBucket", cdk_bootstrap_assets_bucket_name)
+        cdk_bootstrap_assets_bucket.grant_read(cfn_stack_deployment_role)
+        logger.info(f"Granted CFN deployment role read access to CDK assets bucket: {cdk_bootstrap_assets_bucket_name}")
+
+        # 3. Grant CFN role permissions to manage resources defined in MyMainInfrastructureStack
+        #    and to pass roles if MyMainInfrastructureStack creates them.
+        cfn_stack_deployment_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "ec2:*", "vpc:*", # Assuming MainStack creates VPCs and EC2 resources
+                "iam:PassRole",  # If MainStack defines IAM roles for EC2, Lambda, CodeDeploy service role, etc.
+                "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy", # If MainStack creates roles
+                "autoscaling:*",
+                "elasticloadbalancing:*",
+                "codedeploy:*",  # To create/manage CodeDeploy Application, DeploymentGroup
+                "rds:*",         # If deploying RDS
+                "s3:*",          # If deploying other S3 buckets (beyond assets)
+                "logs:*",        # For CloudWatch Logs (e.g., VPC Flow Logs)
+                "cloudwatch:*"   # For Alarms, Dashboards etc.
+                # Add any other specific service permissions your MainOrchestratorStack needs
+            ],
+            resources=["*"]  # Best practice is to scope these down in production
+        ))
+        logger.info(f"CloudFormation deployment role created: {cfn_stack_deployment_role.role_name} with broad permissions for stack resources.")
+
+
+        # --- Pipeline Artifacts ---
+        source_output_artifact = codepipeline.Artifact("SourceCodeOutput")
+        cdk_templates_artifact = codepipeline.Artifact("CdkTemplatesOutput")
+        application_bundle_artifact = codepipeline.Artifact("AppBundleOutput")
+
+        # --- CodePipeline Role ---
+        pipeline_execution_role = iam.Role(
+            self, "CodePipelineExecutionRole",
+            assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
+            description="Role for CodePipeline to orchestrate stages and actions"
         )
-        codedeploy_group = codedeploy.ServerDeploymentGroup.from_server_deployment_group_attributes(
-            self, "CDGroup",
-            application=codedeploy_app,
+        pipeline_artifact_bucket.grant_read_write(pipeline_execution_role)
+        codebuild_execution_role.grant_pass_role(pipeline_execution_role) # Allow pipeline to start CodeBuild
+        cfn_stack_deployment_role.grant_pass_role(pipeline_execution_role) # Allow pipeline to pass the CFN deployment role
+
+        # Permissions for CodePipeline actions
+        pipeline_execution_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "codebuild:StartBuild", "codebuild:BatchGetBuilds",
+                "codestar-connections:UseConnection",
+                "s3:Get*", "s3:List*", "s3:PutObject", # For its own artifact bucket
+                "cloudformation:DescribeStacks", "cloudformation:CreateChangeSet", "cloudformation:DescribeChangeSet",
+                "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:DescribeStackEvents",
+                "codedeploy:CreateDeployment", "codedeploy:GetApplication", "codedeploy:GetDeployment",
+                "codedeploy:GetDeploymentConfig", "codedeploy:GetDeploymentGroup", "codedeploy:RegisterApplicationRevision",
+                "iam:PassRole" # Already granted above, but good to have if policies are separate
+            ],
+            resources=["*"] # Scope down in production
+        ))
+        logger.info(f"CodePipeline execution role created: {pipeline_execution_role.role_name}")
+
+        # --- Reference existing CodeDeploy Application and Deployment Group ---
+        # These are created by MainOrchestratorStack. The pipeline needs to know their names.
+        cd_application = codedeploy.ServerApplication.from_server_application_name(
+            self, "ImportedCodeDeployApplication",
+            server_application_name=codedeploy_application_name
+        )
+        cd_deployment_group = codedeploy.ServerDeploymentGroup.from_server_deployment_group_attributes(
+            self, "ImportedCodeDeployDeploymentGroup",
+            application=cd_application,
             deployment_group_name=codedeploy_deployment_group_name
+            # deployment_config_name= # Optional: if you use a specific one
         )
+        logger.info(f"Referencing CodeDeploy App: {cd_application.application_name}, Group: {cd_deployment_group.deployment_group_name}")
 
-        # Pipeline definition
+        # --- CodePipeline Definition ---
         pipeline = codepipeline.Pipeline(
-            self,
-            "CloudFormationDeploymentPipeline",
-            pipeline_name=f"{self.stack_name}-Pipeline",
-            artifact_bucket=artifact_bucket,
-            role=pipeline_role,
+            self, "CdkAppWithDirectCodeDeployPipeline",
+            pipeline_name=f"{self.stack_name}-DirectCodeDeployApp", # Ensure unique name
+            artifact_bucket=pipeline_artifact_bucket,
+            role=pipeline_execution_role,
             stages=[
                 codepipeline.StageProps(
                     stage_name="Source",
                     actions=[
                         codepipeline_actions.CodeStarConnectionsSourceAction(
                             action_name="GitHub_Source",
-                            owner=source_repo_owner,
-                            repo=source_repo_name,
-                            branch=source_branch_name,
-                            connection_arn=source_connection_arn,
-                            output=source_output,
+                            owner=source_repo_owner, repo=source_repo_name, branch=source_branch_name,
+                            connection_arn=source_connection_arn, output=source_output_artifact
                         )
-                    ],
+                    ]
                 ),
                 codepipeline.StageProps(
                     stage_name="Build",
@@ -136,35 +186,51 @@ class PipelineStack(Stack):
                         codepipeline_actions.CodeBuildAction(
                             action_name="CDK_Synth_And_App_Bundle",
                             project=build_project,
-                            input=source_output,
-                            outputs=[cdk_output, app_bundle_output],
+                            input=source_output_artifact,
+                            outputs=[cdk_templates_artifact, application_bundle_artifact]
                         )
-                    ],
+                    ]
                 ),
                 codepipeline.StageProps(
                     stage_name="Deploy_Infrastructure",
                     actions=[
                         codepipeline_actions.CloudFormationCreateUpdateStackAction(
-                            action_name="Deploy_CF_Template",
+                            action_name=f"Deploy_CFN_{cdk_infra_stack_name.replace('-', '_')}",
                             stack_name=cdk_infra_stack_name,
-                            template_path=cdk_output.at_path("MyMainInfrastructureStack.template.json"),
-                            admin_permissions=True,
+                            # Template path expects <ArtifactName>::<JSONFilePath>
+                            template_path=cdk_templates_artifact.at_path(f"{cdk_infra_stack_name}.template.json"),
+                            admin_permissions=False, # Set to False as we provide a specific deployment_role
+                            deployment_role=cfn_stack_deployment_role, # Pass the explicitly created role
+                            capabilities=[
+                                cdk.CfnCapabilities.NAMED_IAM,    # If stack creates IAM resources
+                                cdk.CfnCapabilities.AUTO_EXPAND   # For nested stacks or macros
+                            ],
+                            # If MyMainInfrastructureStack has parameters that are NOT resolved by context
+                            # but need to be passed from pipeline, use parameter_overrides.
+                            # The S3 bundle parameters are now handled by CodeDeploy action directly.
+                            # parameter_overrides={
+                            # "MyParameter": cdk_templates_artifact.get_param("file.json", "MyParamKey") # Example
+                            # },
+                            # extra_inputs=[application_bundle_artifact] # If params are derived from app bundle
                         )
-                    ],
+                    ]
                 ),
                 codepipeline.StageProps(
                     stage_name="Deploy_Application",
                     actions=[
                         codepipeline_actions.CodeDeployServerDeployAction(
-                            action_name="CodeDeployAppToEC2",
-                            deployment_group=codedeploy_group,
-                            input=app_bundle_output
+                            action_name="Deploy_App_To_EC2_Via_CodeDeploy",
+                            deployment_group=cd_deployment_group,
+                            input=application_bundle_artifact # Contains appspec.yml and app files
                         )
                     ]
                 )
             ]
         )
+        logger.info(f"CodePipeline '{pipeline.pipeline_name}' defined with direct CodeDeploy action.")
 
-        # Outputs
-        cdk.CfnOutput(self, "PipelineName", value=pipeline.pipeline_name)
-        cdk.CfnOutput(self, "ArtifactBucket", value=artifact_bucket.bucket_name)
+        cdk.CfnOutput(self, "PipelineNameOutput", value=pipeline.pipeline_name)
+        cdk.CfnOutput(self, "PipelineArnOutput", value=pipeline.pipeline_arn)
+        cdk.CfnOutput(self, "PipelineArtifactS3BucketOutput", value=pipeline_artifact_bucket.bucket_name)
+        cdk.CfnOutput(self, "CfnDeploymentRoleArn", value=cfn_stack_deployment_role.role_arn)
+
