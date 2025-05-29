@@ -89,10 +89,22 @@ class PipelineStack(Stack):
             description=f"Role assumed by CloudFormation to deploy {cdk_infra_stack_name}"
         )
         pipeline_artifact_bucket.grant_read(cfn_stack_deployment_role)
-        cdk_bootstrap_assets_bucket_name = f"cdk-hnb659fds-assets-{self.account}-{self.region}"
+        
+        cdk_bootstrap_qualifier = "hnb659fds" # As seen in your error message
+        cdk_bootstrap_assets_bucket_name = f"cdk-{cdk_bootstrap_qualifier}-assets-{self.account}-{self.region}"
         cdk_bootstrap_assets_bucket = s3.Bucket.from_bucket_name(self, "CdkBootstrapAssetsBucket", cdk_bootstrap_assets_bucket_name)
         cdk_bootstrap_assets_bucket.grant_read(cfn_stack_deployment_role)
         logger.info(f"Granted CFN deployment role read access to CDK assets bucket: {cdk_bootstrap_assets_bucket_name}")
+        
+        # Add SSM GetParameter(s) permission for CDK Bootstrap version check
+        cfn_stack_deployment_role.add_to_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameters", "ssm:GetParameter"], # Include both for robustness
+            resources=[
+                f"arn:aws:ssm:{self.region}:{self.account}:parameter/cdk-bootstrap/{cdk_bootstrap_qualifier}/version"
+            ]
+        ))
+        logger.info(f"Granted CFN deployment role ssm:GetParameters access for bootstrap version.")
+
         
         
         cfn_stack_deployment_role.add_to_policy(iam.PolicyStatement(
