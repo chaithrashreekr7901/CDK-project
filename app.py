@@ -9,6 +9,7 @@ from deployment_config import get_deployment_configurations
 
 # Import Pipeline Stack from pipeline module
 from pipeline.pipeline_stack import PipelineStack
+from pipeline.app_pipeline_stack import AppDeploymentPipelineStack
 
 # Setup logging
 logging.basicConfig(
@@ -71,18 +72,31 @@ CODEPLOY_DEPLOYMENT_GROUP_NAME = f"{main_stack_name}-EC2-DG" # Example name
 pipeline_stack_name = config.get("pipeline_stack_name", "MyCDKDirectCodeDeployPipeline") # Renamed for clarity
 pipeline_description = config.get("pipeline_stack_description", f"CI/CD Pipeline for {main_stack_name} with direct CodeDeploy action.")
 
+app_pipeline_stack_name = config.get("app_pipeline_stack_name", "MyAppDeployPipeline")
+app_pipeline_description = config.get("app_pipeline_stack_description", "App Deployment Pipeline for EC2 via CodeDeploy")
+
 PipelineStack(app, pipeline_stack_name,
     source_connection_arn=GITHUB_CONNECTION_ARN,
     source_repo_owner=GITHUB_REPO_OWNER,
     source_repo_name=GITHUB_REPO_NAME,
     source_branch_name=GITHUB_BRANCH,
     cdk_infra_stack_name=main_stack_name,
-    codedeploy_application_name=CODEPLOY_APPLICATION_NAME,       # New parameter
-    codedeploy_deployment_group_name=CODEPLOY_DEPLOYMENT_GROUP_NAME, # New parameter
     env=env,
     description=pipeline_description
 )
 logger.info(f"Pipeline stack '{pipeline_stack_name}' defined.")
+AppDeploymentPipelineStack(app, app_pipeline_stack_name,
+    github_connection_arn=GITHUB_CONNECTION_ARN,
+    github_repo_owner=GITHUB_REPO_OWNER,
+    github_repo_name=GITHUB_REPO_NAME,
+    github_branch=GITHUB_BRANCH,
+    codedeploy_application_name=CODEPLOY_APPLICATION_NAME,
+    codedeploy_deployment_group_name=CODEPLOY_DEPLOYMENT_GROUP_NAME,
+    env=env,
+    description=app_pipeline_description
+)
+logger.info(f"App deployment pipeline stack '{app_pipeline_stack_name}' defined.")
+
 
 try:
     app.synth()

@@ -26,7 +26,7 @@ def get_deployment_configurations() -> dict:
 
     # This VPC will be deployed.
     vpc1_core = {
-        'manage_vpc':True, # <<< This VPC WILL BE DEPLOYED
+        'manage_vpc':False, # <<< This VPC WILL BE DEPLOYED
         'creation_mode': 'NEW',
         'existing_vpc_lookup': {'enabled': False, 'by_id': None, 'by_tags': {}},
         'name': "PrimaryDevVPC", 'cidr': "10.10.0.0/16", 
@@ -290,7 +290,7 @@ def get_deployment_configurations() -> dict:
                     "iam_database_authentication_enabled": False,
                     # "license_model": "license-included", # Required for SQL Server, Oracle (e.g. "bring-your-own-license")
                     
-                    "tags": {"Environment": "Production", "Application": "MySQLExample"}
+                    "tags": {"CodeDeploy": "AppEC2", "Application": "MySQLExample"}
                 }
             }
             # Add more RDS instance definitions here
@@ -532,7 +532,7 @@ def get_deployment_configurations() -> dict:
  
     # --- EC2 Deployments (Includes direct Instances and Launch Templates) ---
     ec2_deployments_config = {
-        "deploy": False,  # BOOLEAN: Master switch for all EC2-related deployments in this group (direct instances and LTs).
+        "deploy": True,  # BOOLEAN: Master switch for all EC2-related deployments in this group (direct instances and LTs).
         "description": "Configuration group for EC2 Instance and Launch Template deployments.",
         
         "defaults": { # Default settings applied to all direct instances and launch templates below, unless overridden.
@@ -1648,7 +1648,7 @@ def get_deployment_configurations() -> dict:
         "auto_scaling_groups": [ # LIST of OBJECTS: Each object defines one Auto Scaling Group.
             {
                 "id": "MyWebAppASG",        # STRING (Required): Unique logical ID for this ASG config. Used for CDK construct ID.
-                "enabled": False,            # BOOLEAN (Required): 'true' to deploy this ASG, 'false' to skip.
+                "enabled": True,            # BOOLEAN (Required): 'true' to deploy this ASG, 'false' to skip.
                 "config": {                 # OBJECT (Required): Contains all configurations for this Auto Scaling Group.
                     "auto_scaling_group_name": "my-web-app-asg-example", # STRING (Optional): Physical name. Auto-generated if omitted.
                     "vpc_id": "vpc-0682a04278f37a95c", # STRING (Required): The VPC ID where instances will be launched.
@@ -1894,7 +1894,7 @@ def get_deployment_configurations() -> dict:
 
     final_config = {
         "vpcs": {
-            "deploy": True, # Example: VPCs are globally enabled
+            "deploy": False, # Example: VPCs are globally enabled
             "description": "Configuration group for all VPC instance deployments.",
             "instances": [vpc_instance_1_config, vpc_instance_2_config] # Assuming these are defined
         },
