@@ -41,7 +41,7 @@ class PipelineStack(Stack):
         artifact_bucket.add_to_resource_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
-                principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
+                principals=[iam.ServicePrincipal("arn:aws:iam::198484116691:role/cdk-hnb659fds-cfn-exec-role-198484116691-us-east-1")],
                 actions=[
                     "s3:GetObject",
                     "s3:GetObjectVersion",
