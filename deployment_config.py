@@ -26,7 +26,7 @@ def get_deployment_configurations() -> dict:
 
     # This VPC will be deployed.
     vpc1_core = {
-        'manage_vpc':False, # <<< This VPC WILL BE DEPLOYED
+        'manage_vpc':True, # <<< This VPC WILL BE DEPLOYED
         'creation_mode': 'NEW',
         'existing_vpc_lookup': {'enabled': False, 'by_id': None, 'by_tags': {}},
         'name': "PrimaryDevVPC", 'cidr': "10.10.0.0/16", 
@@ -532,7 +532,7 @@ def get_deployment_configurations() -> dict:
  
     # --- EC2 Deployments (Includes direct Instances and Launch Templates) ---
     ec2_deployments_config = {
-        "deploy": True,  # BOOLEAN: Master switch for all EC2-related deployments in this group (direct instances and LTs).
+        "deploy": False,  # BOOLEAN: Master switch for all EC2-related deployments in this group (direct instances and LTs).
         "description": "Configuration group for EC2 Instance and Launch Template deployments.",
         
         "defaults": { # Default settings applied to all direct instances and launch templates below, unless overridden.
@@ -1894,7 +1894,7 @@ def get_deployment_configurations() -> dict:
 
     final_config = {
         "vpcs": {
-            "deploy": False, # Example: VPCs are globally enabled
+            "deploy": True, # Example: VPCs are globally enabled
             "description": "Configuration group for all VPC instance deployments.",
             "instances": [vpc_instance_1_config, vpc_instance_2_config] # Assuming these are defined
         },
