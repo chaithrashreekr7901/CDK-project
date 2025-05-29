@@ -39,8 +39,8 @@ class PipelineStack(Stack):
         # Ensure CloudFormation can modify the bucket policy
         artifact_bucket.add_to_resource_policy(
             iam.PolicyStatement(
-                actions=["s3:PutBucketPolicy"],
-                resources=[artifact_bucket.bucket_arn],
+                actions=["s3:PutBucketPolicy", "s3:GetBucketPolicy", "s3:PutObject"],
+                resources=[artifact_bucket.bucket_arn, f"{artifact_bucket.bucket_arn}/*"],
                 effect=iam.Effect.ALLOW,
                 principals=[iam.ArnPrincipal("*")]  # Allow CloudFormation to modify bucket policy
             )
