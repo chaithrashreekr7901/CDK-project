@@ -81,6 +81,8 @@ PipelineStack(app, pipeline_stack_name,
     source_repo_name=GITHUB_REPO_NAME,
     source_branch_name=GITHUB_BRANCH,
     cdk_infra_stack_name=main_stack_name,
+    codedeploy_application_name=CODEPLOY_APPLICATION_NAME,       # New parameter
+    codedeploy_deployment_group_name=CODEPLOY_DEPLOYMENT_GROUP_NAME, # New parameter
     env=env,
     description=pipeline_description
 )
