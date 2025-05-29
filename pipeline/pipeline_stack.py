@@ -51,6 +51,12 @@ class PipelineStack(Stack):
             ]
         )
 
+        # Allow CodePipeline role to access the S3 bucket
+        artifact_bucket.grant_read_write(pipeline_role)
+        
+        # Allow CodeBuild role to access the S3 bucket
+        artifact_bucket.grant_read_write(codebuild_role)
+
         # Build Project: Synth + Bundle
         build_project = codebuild.PipelineProject(
             self,
