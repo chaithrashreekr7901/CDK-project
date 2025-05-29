@@ -81,7 +81,7 @@ class PipelineStack(Stack):
             description="CodeBuild project to synthesize CDK app and bundle application."
         )
         logger.info(f"CDK Build project created: {build_project.project_name}")
-        
+         # --- Role for CloudFormation to deploy MyMainInfrastructureStack ---
         
         cfn_stack_deployment_role = iam.Role(
             self, "MainStackCfnDeploymentRole",
@@ -109,6 +109,7 @@ class PipelineStack(Stack):
         
         cfn_stack_deployment_role.add_to_policy(iam.PolicyStatement(
             actions=[
+                "cloudformation:*",
                 "ec2:*", "vpc:*", # Assuming MainStack creates VPCs and EC2 resources
                 "iam:PassRole",  # If MainStack defines IAM roles for EC2, Lambda, CodeDeploy service role, etc.
                 "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy", # If MainStack creates roles
@@ -147,9 +148,11 @@ class PipelineStack(Stack):
             actions=[
                 "codebuild:StartBuild", "codebuild:BatchGetBuilds",
                 "codestar-connections:UseConnection",
-                "s3:Get*", "s3:List*", "s3:PutObject", # For its own artifact bucket
+                "s3:Get*", "s3:List*", "s3:PutObject", 
+                # For its own artifact bucket
                 "cloudformation:DescribeStacks", "cloudformation:CreateChangeSet", "cloudformation:DescribeChangeSet",
                 "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:DescribeStackEvents",
+                "cloudformation:GetTemplate", 
                 "codedeploy:CreateDeployment", "codedeploy:GetApplication", "codedeploy:GetDeployment",
                 "codedeploy:GetDeploymentConfig", "codedeploy:GetDeploymentGroup", "codedeploy:RegisterApplicationRevision",
                 "iam:PassRole" # Already granted above, but good to have if policies are separate
