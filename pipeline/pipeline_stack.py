@@ -40,14 +40,14 @@ class PipelineStack(Stack):
             self, "CodeBuildRole",
             assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
             managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
+                iam.ManagedPolicy.from_aws_managed_policy_name("AWSCodeBuildDeveloperAccess")
             ]
         )
         pipeline_role = iam.Role(
             self, "CodePipelineRole",
             assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
             managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
+                iam.ManagedPolicy.from_aws_managed_policy_name("AWSCodePipelineCustomActionAccess")
             ]
         )
 
@@ -118,3 +118,4 @@ class PipelineStack(Stack):
         # Outputs
         cdk.CfnOutput(self, "PipelineName", value=pipeline.pipeline_name)
         cdk.CfnOutput(self, "ArtifactBucket", value=artifact_bucket.bucket_name)
+        cdk.CfnOutput(self, "ArtifactBucketArn", value=artifact_bucket.bucket_arn)
