@@ -35,21 +35,34 @@ class PipelineStack(Stack):
             versioned=True
         )
 
+        # Explicit Bucket Policy to allow CloudFormation and CodePipeline access
+        artifact_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:PutObject"],
+                resources=[f"{artifact_bucket.bucket_arn}/*"],
+                principals=[iam.ArnPrincipal("*")]  # Allow everyone, or more restrictive as needed
+            )
+        )
+
         # IAM Roles
         codebuild_role = iam.Role(
             self, "CodeBuildRole",
             assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
             managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
+                iam.ManagedPolicy.from_aws_managed_policy_name("AWSCodeBuildDeveloperAccess")
             ]
         )
         pipeline_role = iam.Role(
             self, "CodePipelineRole",
             assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
             managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
+                iam.ManagedPolicy.from_aws_managed_policy_name("AWSCodePipelineCustomActionAccess")
             ]
         )
+
+        # Allow CodePipeline and CodeBuild to access the S3 bucket
+        artifact_bucket.grant_read_write(pipeline_role)
+        artifact_bucket.grant_read_write(codebuild_role)
 
         # Build Project: Synth + Bundle
         build_project = codebuild.PipelineProject(
@@ -118,3 +131,4 @@ class PipelineStack(Stack):
         # Outputs
         cdk.CfnOutput(self, "PipelineName", value=pipeline.pipeline_name)
         cdk.CfnOutput(self, "ArtifactBucket", value=artifact_bucket.bucket_name)
+        cdk.CfnOutput(self, "ArtifactBucketArn", value=artifact_bucket.bucket_arn)
