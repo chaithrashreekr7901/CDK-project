@@ -7,6 +7,8 @@ from aws_cdk import (
     aws_codepipeline_actions as codepipeline_actions,
     aws_codebuild as codebuild,
     aws_s3 as s3,
+    aws_codedeploy as codedeploy,
+    aws_cloudformation as cloudformation,
     Environment,
 )
 from constructs import Construct
@@ -22,28 +24,19 @@ class PipelineStack(Stack):
         source_repo_name: str,
         source_branch_name: str,
         cdk_infra_stack_name: str,
+        codedeploy_application_name: str,
+        codedeploy_deployment_group_name: str,
         env: typing.Optional[Environment] = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, env=env, **kwargs)
 
-        # Artifact S3 bucket with the modified public access setting
+        # Artifact S3 bucket
         artifact_bucket = s3.Bucket(
             self, "PipelineArtifactsBucket",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
-            versioned=True,
-            block_public_access=s3.BlockPublicAccess.BLOCK_ACLS  # Allow ACLs only, avoid full public access
-        )
-
-        # Ensure CloudFormation can modify the bucket policy
-        artifact_bucket.add_to_resource_policy(
-            iam.PolicyStatement(
-                actions=["s3:PutBucketPolicy", "s3:GetBucketPolicy", "s3:PutObject"],
-                resources=[artifact_bucket.bucket_arn, f"{artifact_bucket.bucket_arn}/*"],
-                effect=iam.Effect.ALLOW,
-                principals=[iam.ArnPrincipal("*")]  # Allow CloudFormation to modify bucket policy
-            )
+            versioned=True
         )
 
         # IAM Roles
@@ -51,14 +44,14 @@ class PipelineStack(Stack):
             self, "CodeBuildRole",
             assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
             managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AWSCodeBuildDeveloperAccess")
+                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
             ]
         )
         pipeline_role = iam.Role(
             self, "CodePipelineRole",
             assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
             managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AWSCodePipelineCustomActionAccess")
+                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
             ]
         )
 
@@ -79,6 +72,16 @@ class PipelineStack(Stack):
         source_output = codepipeline.Artifact("SourceCode")
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
         app_bundle_output = codepipeline.Artifact("AppBundleOutput")
+
+        # CodeDeploy app and deployment group
+        codedeploy_app = codedeploy.ServerApplication.from_server_application_name(
+            self, "CDApp", server_application_name=codedeploy_application_name
+        )
+        codedeploy_group = codedeploy.ServerDeploymentGroup.from_server_deployment_group_attributes(
+            self, "CDGroup",
+            application=codedeploy_app,
+            deployment_group_name=codedeploy_deployment_group_name
+        )
 
         # Pipeline definition
         pipeline = codepipeline.Pipeline(
@@ -122,6 +125,16 @@ class PipelineStack(Stack):
                             admin_permissions=True,
                         )
                     ],
+                ),
+                codepipeline.StageProps(
+                    stage_name="Deploy_Application",
+                    actions=[
+                        codepipeline_actions.CodeDeployServerDeployAction(
+                            action_name="CodeDeployAppToEC2",
+                            deployment_group=codedeploy_group,
+                            input=app_bundle_output
+                        )
+                    ]
                 )
             ]
         )
@@ -129,4 +142,3 @@ class PipelineStack(Stack):
         # Outputs
         cdk.CfnOutput(self, "PipelineName", value=pipeline.pipeline_name)
         cdk.CfnOutput(self, "ArtifactBucket", value=artifact_bucket.bucket_name)
-        cdk.CfnOutput(self, "ArtifactBucketArn", value=artifact_bucket.bucket_arn)
