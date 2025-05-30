@@ -92,15 +92,18 @@ class PipelineStack(Stack):
         #    'hnb659fds' is a qualifier; if you used a different one during bootstrap, update it.
         #    If you did not use a qualifier, the bucket name is simpler: cdk-assets-${AWS::AccountId}-${AWS::Region}
         #    For safety, let's assume the qualifier is present.
-        cdk_bootstrap_assets_bucket_name = f"cdk-hnb659fds-assets-{self.account}-{self.region}"
+        cdk_bootstrap_qualifier = "hnb659fds" # As seen in your error message
+        cdk_bootstrap_assets_bucket_name = f"cdk-{cdk_bootstrap_qualifier}-assets-{self.account}-{self.region}"
         cdk_bootstrap_assets_bucket = s3.Bucket.from_bucket_name(self, "CdkBootstrapAssetsBucket", cdk_bootstrap_assets_bucket_name)
         cdk_bootstrap_assets_bucket.grant_read(cfn_stack_deployment_role)
         logger.info(f"Granted CFN deployment role read access to CDK assets bucket: {cdk_bootstrap_assets_bucket_name}")
+
 
         # 3. Grant CFN role permissions to manage resources defined in MyMainInfrastructureStack
         #    and to pass roles if MyMainInfrastructureStack creates them.
         cfn_stack_deployment_role.add_to_policy(iam.PolicyStatement(
             actions=[
+                "cloudformation:*",
                 "ec2:*", "vpc:*", # Assuming MainStack creates VPCs and EC2 resources
                 "iam:PassRole",  # If MainStack defines IAM roles for EC2, Lambda, CodeDeploy service role, etc.
                 "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy", # If MainStack creates roles
@@ -141,6 +144,7 @@ class PipelineStack(Stack):
                 "s3:Get*", "s3:List*", "s3:PutObject", # For its own artifact bucket
                 "cloudformation:DescribeStacks", "cloudformation:CreateChangeSet", "cloudformation:DescribeChangeSet",
                 "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:DescribeStackEvents",
+                "cloudformation:GetTemplate",
                 "codedeploy:CreateDeployment", "codedeploy:GetApplication", "codedeploy:GetDeployment",
                 "codedeploy:GetDeploymentConfig", "codedeploy:GetDeploymentGroup", "codedeploy:RegisterApplicationRevision",
                 "iam:PassRole" # Already granted above, but good to have if policies are separate
