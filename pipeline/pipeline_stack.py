@@ -12,7 +12,6 @@ from aws_cdk import (
 from constructs import Construct
 import typing
 
-
 class PipelineStack(Stack):
     def __init__(
         self,
@@ -26,7 +25,6 @@ class PipelineStack(Stack):
         env: typing.Optional[Environment] = None,
         **kwargs,
     ) -> None:
-        # Pass only expected parameters to Stack.__init__
         super().__init__(scope, construct_id, env=env)
 
         # Artifact S3 bucket for pipeline artifacts
@@ -44,7 +42,6 @@ class PipelineStack(Stack):
             "CodeBuildRole",
             assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
         )
-        # Grant read access to S3 artifacts bucket for CodeBuild
         codebuild_role.add_managed_policy(
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3ReadOnlyAccess")
         )
@@ -64,11 +61,9 @@ class PipelineStack(Stack):
             "CodePipelineRole",
             assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
         )
-        # Add managed policy for S3 Read (important for accessing artifact bucket)
         pipeline_role.add_managed_policy(
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3ReadOnlyAccess")
         )
-        # You can narrow down the resource ARNs below if desired
         pipeline_role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
@@ -77,7 +72,17 @@ class PipelineStack(Stack):
                     "iam:PassRole",
                     "codepipeline:*",
                 ],
-                resources=["*"],  # Narrow down for production if needed
+                resources=["*"],
+            )
+        )
+        # Add S3 access permissions for nested stack templates
+        pipeline_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:ListBucket"],
+                resources=[
+                    f"arn:aws:s3:::{artifact_bucket.bucket_name}/*",
+                    f"arn:aws:s3:::{artifact_bucket.bucket_name}"
+                ],
             )
         )
 
@@ -100,6 +105,7 @@ class PipelineStack(Stack):
         source_output = codepipeline.Artifact("SourceCode")
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
         app_bundle_output = codepipeline.Artifact("AppBundleOutput")
+
 
         # Define the pipeline
         pipeline = codepipeline.Pipeline(
