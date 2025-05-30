@@ -36,7 +36,12 @@ class PipelineStack(Stack):
             auto_delete_objects=True,
             versioned=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
-            block_public_access=s3.BlockPublicAccess.NONE,  # Allow public access
+            block_public_access=s3.BlockPublicAccess(
+            block_public_acls=False,
+            block_public_policy=False,
+            ignore_public_acls=False,
+            restrict_public_buckets=False,
+            ),  # Allow public access
             public_read_access=True,
         )
 
@@ -48,7 +53,12 @@ class PipelineStack(Stack):
             auto_delete_objects=True,
             versioned=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
-            block_public_access=s3.BlockPublicAccess.NONE,  # Allow public access
+            block_public_access=s3.BlockPublicAccess(
+            block_public_acls=False,
+            block_public_policy=False,
+            ignore_public_acls=False,
+            restrict_public_buckets=False,
+            ),  
             public_read_access=True,
         )
 
