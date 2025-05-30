@@ -26,8 +26,8 @@ class PipelineStack(Stack):
         env: typing.Optional[Environment] = None,
         **kwargs,
     ) -> None:
-        # Pass env and kwargs to the base Stack constructor
-        super().__init__(scope, construct_id, env=env, **kwargs)
+        # Pass only expected parameters to Stack.__init__
+        super().__init__(scope, construct_id, env=env)
 
         # Artifact S3 bucket for pipeline artifacts
         artifact_bucket = s3.Bucket(
@@ -44,12 +44,12 @@ class PipelineStack(Stack):
             "CodeBuildRole",
             assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
         )
+        # Grant read access to S3 artifacts bucket for CodeBuild
         codebuild_role.add_managed_policy(
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3ReadOnlyAccess")
         )
-        # Corrected policy name here
         codebuild_role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name("AWSCloudFormationFullAccess")
+            iam.ManagedPolicy.from_aws_managed_policy_name("CloudFormationFullAccess")
         )
         codebuild_role.add_managed_policy(
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEC2ReadOnlyAccess")
@@ -64,16 +64,20 @@ class PipelineStack(Stack):
             "CodePipelineRole",
             assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
         )
+        # Add managed policy for S3 Read (important for accessing artifact bucket)
+        pipeline_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3ReadOnlyAccess")
+        )
+        # You can narrow down the resource ARNs below if desired
         pipeline_role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
-                    "s3:*",
                     "codebuild:*",
                     "cloudformation:*",
                     "iam:PassRole",
                     "codepipeline:*",
                 ],
-                resources=["*"],  # Narrow down for production!
+                resources=["*"],  # Narrow down for production if needed
             )
         )
 
