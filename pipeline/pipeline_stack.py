@@ -8,10 +8,10 @@ from aws_cdk import (
     aws_codebuild as codebuild,
     aws_s3 as s3,
     Environment,
-    aws_s3_deployment as s3_deployment,
 )
 from constructs import Construct
 import typing
+
 
 class PipelineStack(Stack):
     def __init__(
@@ -28,7 +28,7 @@ class PipelineStack(Stack):
     ) -> None:
         super().__init__(scope, construct_id, env=env)
 
-        # Artifact S3 bucket
+        # Artifact bucket for pipeline
         artifact_bucket = s3.Bucket(
             self,
             "PipelineArtifactsBucket",
@@ -39,7 +39,7 @@ class PipelineStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
 
-        # Allow CloudFormation service principal to read artifacts from this bucket
+        # Grant CloudFormation access to the bucket
         artifact_bucket.add_to_resource_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
@@ -57,7 +57,7 @@ class PipelineStack(Stack):
             )
         )
 
-        # CodeBuild Role
+        # CodeBuild role
         codebuild_role = iam.Role(
             self,
             "CodeBuildRole",
@@ -76,7 +76,7 @@ class PipelineStack(Stack):
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMReadOnlyAccess")
         )
 
-        # CodePipeline Role
+        # CodePipeline role
         pipeline_role = iam.Role(
             self,
             "CodePipelineRole",
@@ -97,25 +97,25 @@ class PipelineStack(Stack):
             )
         )
 
-        # CodeBuild Project
+        # CodeBuild project
         build_project = codebuild.PipelineProject(
             self,
             "CdkSynthAndBundleProject",
             project_name=f"{self.stack_name}-SynthAndBundle",
             role=codebuild_role,
-            build_spec=codebuild.BuildSpec.from_source_filename(
-                "buildspec_cdk_synth_bundle.yml"
-            ),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_cdk_synth_bundle.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
                 privileged=True,
             ),
         )
 
+        # Artifacts
         source_output = codepipeline.Artifact("SourceCode")
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
         app_bundle_output = codepipeline.Artifact("AppBundleOutput")
 
+        # Define the pipeline
         pipeline = codepipeline.Pipeline(
             self,
             "CloudFormationDeploymentPipeline",
@@ -153,9 +153,7 @@ class PipelineStack(Stack):
                         codepipeline_actions.CloudFormationCreateUpdateStackAction(
                             action_name="Deploy_CF_Template",
                             stack_name=cdk_infra_stack_name,
-                            template_path=cdk_output.at_path(
-                                "MyMainInfrastructureStack.template.json"
-                            ),
+                            template_path=cdk_output.at_path("MyMainInfrastructureStack.template.json"),
                             admin_permissions=True,
                         )
                     ],
