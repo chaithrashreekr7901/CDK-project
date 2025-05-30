@@ -13,7 +13,6 @@ from aws_cdk import (
 from constructs import Construct
 import typing
 
-
 class PipelineStack(Stack):
     def __init__(
         self,
@@ -37,6 +36,7 @@ class PipelineStack(Stack):
             auto_delete_objects=True,
             versioned=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
 
         # Allow CloudFormation service principal to read artifacts from this bucket
