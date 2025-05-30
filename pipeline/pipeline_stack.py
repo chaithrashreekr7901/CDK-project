@@ -49,7 +49,7 @@ class PipelineStack(Stack):
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3ReadOnlyAccess")
         )
         codebuild_role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name("CloudFormationFullAccess")
+            iam.ManagedPolicy.from_aws_managed_policy_name("AWSCloudFormationFullAccess")
         )
         codebuild_role.add_managed_policy(
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEC2ReadOnlyAccess")
