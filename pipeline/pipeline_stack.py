@@ -236,6 +236,7 @@ class PipelineStack(Stack):
                             deployment_role=cfn_stack_deployment_role,
                             replace_on_failure=True,
                             run_order=1,
+                            extra_inputs=[application_bundle_artifact],
                             # Corrected parameter name:
                             cfn_capabilities=[ # Changed from 'capabilities'
                                 cdk.CfnCapabilities.NAMED_IAM,
