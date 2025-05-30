@@ -8,9 +8,11 @@ from aws_cdk import (
     aws_codebuild as codebuild,
     aws_s3 as s3,
     Environment,
+    aws_s3_deployment as s3_deployment,
 )
 from constructs import Construct
 import typing
+
 
 class PipelineStack(Stack):
     def __init__(
@@ -27,16 +29,35 @@ class PipelineStack(Stack):
     ) -> None:
         super().__init__(scope, construct_id, env=env)
 
-        # Artifact S3 bucket for pipeline artifacts
+        # Artifact S3 bucket
         artifact_bucket = s3.Bucket(
             self,
             "PipelineArtifactsBucket",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
             versioned=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
         )
 
-        # IAM Role for CodeBuild (scoped permissions)
+        # Allow CloudFormation service principal to read artifacts from this bucket
+        artifact_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
+                actions=[
+                    "s3:GetObject",
+                    "s3:GetObjectVersion",
+                    "s3:GetBucketVersioning",
+                    "s3:ListBucket",
+                ],
+                resources=[
+                    artifact_bucket.bucket_arn,
+                    f"{artifact_bucket.bucket_arn}/*",
+                ],
+            )
+        )
+
+        # CodeBuild Role
         codebuild_role = iam.Role(
             self,
             "CodeBuildRole",
@@ -55,7 +76,7 @@ class PipelineStack(Stack):
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMReadOnlyAccess")
         )
 
-        # IAM Role for CodePipeline (scoped permissions)
+        # CodePipeline Role
         pipeline_role = iam.Role(
             self,
             "CodePipelineRole",
@@ -75,18 +96,8 @@ class PipelineStack(Stack):
                 resources=["*"],
             )
         )
-        # Add S3 access permissions for nested stack templates
-        pipeline_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:ListBucket"],
-                resources=[
-                    f"arn:aws:s3:::{artifact_bucket.bucket_name}/*",
-                    f"arn:aws:s3:::{artifact_bucket.bucket_name}"
-                ],
-            )
-        )
 
-        # CodeBuild Project (synth + bundle)
+        # CodeBuild Project
         build_project = codebuild.PipelineProject(
             self,
             "CdkSynthAndBundleProject",
@@ -101,13 +112,10 @@ class PipelineStack(Stack):
             ),
         )
 
-        # Artifacts for pipeline stages
         source_output = codepipeline.Artifact("SourceCode")
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
         app_bundle_output = codepipeline.Artifact("AppBundleOutput")
 
-
-        # Define the pipeline
         pipeline = codepipeline.Pipeline(
             self,
             "CloudFormationDeploymentPipeline",
@@ -155,6 +163,6 @@ class PipelineStack(Stack):
             ],
         )
 
-        # Outputs for visibility
+        # Outputs
         cdk.CfnOutput(self, "PipelineName", value=pipeline.pipeline_name)
         cdk.CfnOutput(self, "ArtifactBucket", value=artifact_bucket.bucket_name)
