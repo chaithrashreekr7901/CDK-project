@@ -1,0 +1,34 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 18
+      python: 3.11
+    commands:
+      - echo "Installing AWS CDK..."
+      - npm install -g aws-cdk
+      - echo "Installing Python dependencies..."
+      - pip install -r requirements.txt
+
+  pre_build:
+    commands:
+      - echo "Synthesizing the CDK app..."
+      - cdk synth MyMainInfrastructureStack --output cdk.out
+
+  build:
+    commands:
+      - echo "Bundling application artifacts..."
+      - mkdir -p app_bundle
+      - rsync -av --exclude='app_bundle' ./ app_bundle/
+
+artifacts:
+  secondary-artifacts:
+    AppBundleOutput:
+      base-directory: app_bundle
+      files:
+        - '**/*'
+    CdkTemplatesOutput:
+      base-directory: cdk.out
+      files:
+        - '**/*'
