@@ -14,40 +14,40 @@ phases:
   pre_build:
     commands:
       - echo "Synthesizing the CDK app..."
-      - cdk synth MyMainInfrastructureStack --output cdk.out # Correct: Synthesizes the specified stack to cdk.out
+      - cdk synth MyMainInfrastructureStack --output cdk.out
 
   build:
-    commands:
-      - echo "Bundling application artifacts..."
-      - mkdir -p app_bundle # Correct: Creates staging directory
-      - | # Correct: Multi-line command for copying application source
-        if [ -d "application_source" ]; then
-          cp -r application_source/* app_bundle/
-        else
-          echo "Warning: 'application_source' directory not found."
-        fi
-      - | # Correct: Multi-line command for copying appspec.yml
-        if [ -f "appspec.yml" ]; then # If appspec.yml is at the root
-          cp appspec.yml app_bundle/
-        elif [ -f "application_source/appspec.yml" ]; then # If appspec.yml is in application_source
-          # This assumes appspec.yml from application_source was already copied if the directory was.
-          # If not, you might need: cp application_source/appspec.yml app_bundle/
-          echo "appspec.yml found in application_source and copied."
-        else
-          echo "Error: appspec.yml not found!"
-          exit 1
-        fi
-      - echo "Zipping the app_bundle directory..."
-      - (cd app_bundle && zip -r ../app_bundle.zip .) # Correct: Creates app_bundle.zip in the parent (root)
+  commands:
+    - echo "Bundling application artifacts..."
+    - mkdir -p app_bundle # Staging directory for the bundle content
+    - |
+      if [ -d "application_source" ]; then
+        cp -r application_source/* app_bundle/
+      else
+        echo "Warning: 'application_source' directory not found."
+      fi
+    - |
+      if [ -f "appspec.yml" ]; then # If appspec.yml is at the root
+        cp appspec.yml app_bundle/
+      elif [ -f "application_source/appspec.yml" ]; then # If appspec.yml is in application_source
+        # Already copied if application_source was copied, or cp application_source/appspec.yml app_bundle/
+        echo "appspec.yml found in application_source and copied."
+      else
+        echo "Error: appspec.yml not found!"
+        exit 1
+      fi
+    # You should then ZIP the contents of 'app_bundle' to create a single file artifact
+    - echo "Zipping the app_bundle directory..."
+    - (cd app_bundle && zip -r ../app_bundle.zip .) # Creates app_bundle.zip in the parent (root)
 
-artifacts: # Correct: Top-level key
+artifacts:
   # Primary artifact (for CdkTemplatesOutput)
   files:
-    - '**/*' # Includes all files and subdirectories from cdk.out
-  base-directory: 'cdk.out' # Correct: Source for the primary artifact
+    - '**/*'
+  base-directory: 'cdk.out'
   # Secondary artifact (for AppBundleOutput)
   secondary-artifacts:
-    AppBundleOutput: # This identifier MUST match the artifact name in PipelineStack.py
+    AppBundleOutput:
       files:
-        - app_bundle.zip # Correct: Specifies the zip file
-      base-directory: '.' # Correct: app_bundle.zip is at the root of the build environment
+        - app_bundle.zip
+      base-directory: '.' # Since app_bundle.zip is created in the root
