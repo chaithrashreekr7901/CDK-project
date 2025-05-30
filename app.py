@@ -60,7 +60,7 @@ logger.info(f"Main infrastructure stack '{main_stack_name}' defined.")
 GITHUB_CONNECTION_ARN = config.get("github_connection_arn", "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1")
 GITHUB_REPO_OWNER = config.get("github_repo_owner", "chaithrashreekr7901")
 GITHUB_REPO_NAME = config.get("github_repo_name", "CDK-project")
-GITHUB_BRANCH = config.get("github_branch_name", "CRMP-cdk")
+GITHUB_BRANCH = config.get("github_branch_name", "restore-working-version")
 
 # Names for CodeDeploy resources - these should match what MainOrchestratorStack creates
 # You might want to get these from config as well, or ensure they are consistently named.
