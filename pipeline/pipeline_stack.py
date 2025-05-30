@@ -36,7 +36,8 @@ class PipelineStack(Stack):
             auto_delete_objects=True,
             versioned=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            block_public_access=s3.BlockPublicAccess.NONE,  # Allow public access
+            public_read_access=True,
         )
 
         # Deploy bucket for CDK templates
@@ -47,7 +48,8 @@ class PipelineStack(Stack):
             auto_delete_objects=True,
             versioned=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            block_public_access=s3.BlockPublicAccess.NONE,  # Allow public access
+            public_read_access=True,
         )
 
         # Grant CloudFormation access to the deploy bucket
@@ -172,7 +174,7 @@ class PipelineStack(Stack):
                     stage_name="Deploy_Infrastructure",
                     actions=[
                         codepipeline_actions.CloudFormationCreateUpdateStackAction(
-                            action_name="Deploy_CF_Template",
+                            action_name=f"Deploy_{cdk_infra_stack_name}",
                             stack_name=cdk_infra_stack_name,
                             template_path=cdk_output.at_path("MyMainInfrastructureStack.template.json"),
                             admin_permissions=True,
