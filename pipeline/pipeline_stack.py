@@ -211,9 +211,11 @@ class PipelineStack(Stack):
                         codepipeline_actions.CloudFormationCreateUpdateStackAction(
                             action_name=f"Deploy_CFN_{cdk_infra_stack_name.replace('-', '_')}",
                             stack_name=cdk_infra_stack_name,
-                            template_path=cdk_templates_artifact.at_path(f"{cdk_infra_stack_name}.template.json"),
+                            template_path=cdk_templates_artifact.at_path("MyMainInfrastructureStack.template.json"),
                             admin_permissions=False,
                             deployment_role=cfn_stack_deployment_role,
+                            replace_on_failure=True,
+                            run_order=1,
                             # Corrected parameter name:
                             cfn_capabilities=[ # Changed from 'capabilities'
                                 cdk.CfnCapabilities.NAMED_IAM,
@@ -228,7 +230,8 @@ class PipelineStack(Stack):
                         codepipeline_actions.CodeDeployServerDeployAction(
                             action_name="Deploy_App_To_EC2_Via_CodeDeploy",
                             deployment_group=cd_deployment_group,
-                            input=application_bundle_artifact
+                            input=application_bundle_artifact,
+                            run_order=1
                         )
                     ]
                 )
