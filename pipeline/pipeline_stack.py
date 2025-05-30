@@ -26,8 +26,8 @@ class PipelineStack(Stack):
         env: typing.Optional[Environment] = None,
         **kwargs,
     ) -> None:
-        # Pass only expected parameters to Stack.__init__
-        super().__init__(scope, construct_id, env=env)
+        # Pass env and kwargs to the base Stack constructor
+        super().__init__(scope, construct_id, env=env, **kwargs)
 
         # Artifact S3 bucket for pipeline artifacts
         artifact_bucket = s3.Bucket(
@@ -47,8 +47,9 @@ class PipelineStack(Stack):
         codebuild_role.add_managed_policy(
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3ReadOnlyAccess")
         )
+        # Corrected policy name here
         codebuild_role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name("CloudFormationFullAccess")
+            iam.ManagedPolicy.from_aws_managed_policy_name("AWSCloudFormationFullAccess")
         )
         codebuild_role.add_managed_policy(
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEC2ReadOnlyAccess")
