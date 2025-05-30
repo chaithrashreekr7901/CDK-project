@@ -39,26 +39,6 @@ class PipelineStack(Stack):
             auto_delete_objects=True,
             versioned=True
         )
-        pipeline_artifact_bucket.add_to_resource_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                principals=[
-                    iam.ArnPrincipal("arn:aws:iam::198484116691:role/MyCDKDirectCodeDeployPipe-CustomS3AutoDeleteObjects-pAVm0KNUBs0B")
-                ],
-                actions=[
-                    "s3:DeleteObject*",
-                    "s3:GetBucket*",
-                    "s3:List*",
-                    "s3:PutBucketPolicy"
-                ],
-                resources=[
-                    pipeline_artifact_bucket.bucket_arn,
-                    f"{pipeline_artifact_bucket.bucket_arn}/*"
-                ]
-            )
-        )
-
-        
         logger.info(f"Pipeline stage artifact bucket created: {pipeline_artifact_bucket.bucket_name}")
 
         # --- Role for CodeBuild Projects ---
@@ -236,7 +216,6 @@ class PipelineStack(Stack):
                             deployment_role=cfn_stack_deployment_role,
                             replace_on_failure=True,
                             run_order=1,
-                            extra_inputs=[application_bundle_artifact],
                             # Corrected parameter name:
                             cfn_capabilities=[ # Changed from 'capabilities'
                                 cdk.CfnCapabilities.NAMED_IAM,
