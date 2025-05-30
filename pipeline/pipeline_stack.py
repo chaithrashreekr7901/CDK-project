@@ -39,7 +39,7 @@ class PipelineStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
 
-        # Template deploy bucket for CDK templates (cdk.out)
+        # Deploy bucket for CDK templates
         template_deploy_bucket = s3.Bucket(
             self,
             "CdkTemplateDeployBucket",
@@ -50,16 +50,24 @@ class PipelineStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
 
-        # Grant CloudFormation access to the template deploy bucket
+        # Grant CloudFormation access to the deploy bucket
         template_deploy_bucket.add_to_resource_policy(
             iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:GetObjectVersion"],
+                actions=[
+                    "s3:GetObject",
+                    "s3:GetObjectVersion",
+                    "s3:GetBucketVersioning",
+                    "s3:ListBucket"
+                ],
                 principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
-                resources=[f"{template_deploy_bucket.bucket_arn}/*"],
+                resources=[
+                    template_deploy_bucket.bucket_arn,
+                    f"{template_deploy_bucket.bucket_arn}/*"
+                ],
             )
         )
 
-        # Grant CloudFormation access to the artifact bucket
+        # Grant CloudFormation access to artifact bucket as well
         artifact_bucket.add_to_resource_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
