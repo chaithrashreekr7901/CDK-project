@@ -97,6 +97,16 @@ class PipelineStack(Stack):
         cdk_bootstrap_assets_bucket = s3.Bucket.from_bucket_name(self, "CdkBootstrapAssetsBucket", cdk_bootstrap_assets_bucket_name)
         cdk_bootstrap_assets_bucket.grant_read(cfn_stack_deployment_role)
         logger.info(f"Granted CFN deployment role read access to CDK assets bucket: {cdk_bootstrap_assets_bucket_name}")
+        
+        
+        cfn_stack_deployment_role.add_to_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameters", "ssm:GetParameter"], # Include both for robustness
+            resources=[
+                # Construct the ARN for the specific bootstrap version parameter
+                f"arn:aws:ssm:{self.region}:{self.account}:parameter/cdk-bootstrap/{cdk_bootstrap_qualifier}/version"
+            ]
+        ))
+        logger.info(f"Granted CFN deployment role ssm:GetParameters access for bootstrap version.")
 
 
         # 3. Grant CFN role permissions to manage resources defined in MyMainInfrastructureStack
