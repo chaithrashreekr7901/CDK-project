@@ -41,9 +41,7 @@ class PipelineStack(Stack):
             block_public_policy=False,
             ignore_public_acls=False,
             restrict_public_buckets=False,
-            ),
-
-            block_public_access=s3.BlockPublicAccess.NONE,  # Allow public access
+            ),  # Allow public access
             public_read_access=True,
         )
 
