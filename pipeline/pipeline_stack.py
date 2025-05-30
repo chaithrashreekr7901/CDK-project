@@ -7,7 +7,6 @@ from aws_cdk import (
     aws_codepipeline_actions as codepipeline_actions,
     aws_codebuild as codebuild,
     aws_s3 as s3,
-    aws_codedeploy as codedeploy,
     Environment,
 )
 from constructs import Construct
@@ -27,7 +26,8 @@ class PipelineStack(Stack):
         env: typing.Optional[Environment] = None,
         **kwargs,
     ) -> None:
-        super().__init__(scope, construct_id, env=env, **kwargs)
+        # Pass only expected parameters to Stack.__init__
+        super().__init__(scope, construct_id, env=env)
 
         # Artifact S3 bucket for pipeline artifacts
         artifact_bucket = s3.Bucket(
@@ -51,9 +51,6 @@ class PipelineStack(Stack):
             iam.ManagedPolicy.from_aws_managed_policy_name("CloudFormationFullAccess")
         )
         codebuild_role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name("AWSCodeDeployFullAccess")
-        )
-        codebuild_role.add_managed_policy(
             iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEC2ReadOnlyAccess")
         )
         codebuild_role.add_managed_policy(
@@ -72,31 +69,11 @@ class PipelineStack(Stack):
                     "s3:*",
                     "codebuild:*",
                     "cloudformation:*",
-                    "codedeploy:*",
                     "iam:PassRole",
                     "codepipeline:*",
                 ],
-                resources=["*"],  # For tighter security, scope down ARNs here
+                resources=["*"],  # Narrow down for production!
             )
-        )
-
-        # Create CodeDeploy application and deployment group
-        codedeploy_app = codedeploy.ServerApplication(
-            self, "CodeDeployApplication", application_name=f"{self.stack_name}-App"
-        )
-
-        codedeploy_group = codedeploy.ServerDeploymentGroup(
-            self,
-            "CodeDeployDeploymentGroup",
-            application=codedeploy_app,
-            deployment_group_name=f"{self.stack_name}-DeploymentGroup",
-            # Replace below with your EC2 instance tags or autoscaling groups
-            ec2_instance_tags=codedeploy.InstanceTagSet(
-                {
-                    "Name": ["YourEC2InstanceTagValue"]  # <-- Replace this tag value!
-                }
-            ),
-            deployment_config=codedeploy.ServerDeploymentConfig.ALL_AT_ONCE,
         )
 
         # CodeBuild Project (synth + bundle)
@@ -160,18 +137,7 @@ class PipelineStack(Stack):
                             template_path=cdk_output.at_path(
                                 "MyMainInfrastructureStack.template.json"
                             ),
-                            admin_permissions=False,
-                            role=pipeline_role,
-                        )
-                    ],
-                ),
-                codepipeline.StageProps(
-                    stage_name="Deploy_Application",
-                    actions=[
-                        codepipeline_actions.CodeDeployServerDeployAction(
-                            action_name="CodeDeployAppToEC2",
-                            deployment_group=codedeploy_group,
-                            input=app_bundle_output,
+                            admin_permissions=True,
                         )
                     ],
                 ),
@@ -181,9 +147,3 @@ class PipelineStack(Stack):
         # Outputs for visibility
         cdk.CfnOutput(self, "PipelineName", value=pipeline.pipeline_name)
         cdk.CfnOutput(self, "ArtifactBucket", value=artifact_bucket.bucket_name)
-        cdk.CfnOutput(self, "CodeDeployApplicationName", value=codedeploy_app.application_name)
-        cdk.CfnOutput(
-            self,
-            "CodeDeployDeploymentGroupName",
-            value=codedeploy_group.deployment_group_name,
-        )

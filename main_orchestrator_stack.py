@@ -112,37 +112,6 @@ class MainOrchestratorStack(Stack):
         else:
             logger.info("MainOrchestrator: EC2 Instance deployment group is disabled.")
 
-        if target_asg_for_codedeploy:
-            logger.info(f"Setting up CodeDeploy Application and DeploymentGroup targeting ASG: {target_asg_for_codedeploy.auto_scaling_group_name}")
 
-            codedeploy_service_role = iam.Role(
-                self, "CodeDeployServiceRoleForEC2",
-                assumed_by=iam.ServicePrincipal("codedeploy.amazonaws.com"),
-                managed_policies=[
-                    iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSCodeDeployRole")
-                ]
-            )
-
-            cd_application_name = f"{self.stack_name}-EC2App"
-            self.public_codedeploy_application = codedeploy.ServerApplication(self, "MyEC2CodeDeployApplication",
-                application_name=cd_application_name,
-                compute_platform=codedeploy.ComputePlatform.SERVER
-            )
-            logger.info(f"CodeDeploy Application created: {self.public_codedeploy_application.application_name}")
-
-            cd_deployment_group_name = f"{self.stack_name}-EC2-DG"
-            self.public_codedeploy_deployment_group = codedeploy.ServerDeploymentGroup(self, "MyEC2CodeDeployDeploymentGroup",
-                application=self.public_codedeploy_application,
-                deployment_group_name=cd_deployment_group_name,
-                auto_scaling_groups=[target_asg_for_codedeploy],
-                install_agent=True,
-                deployment_config=codedeploy.ServerDeploymentConfig.ALL_AT_ONCE,
-                service_role=codedeploy_service_role,
-            )
-            logger.info(f"CodeDeploy Deployment Group created: {self.public_codedeploy_deployment_group.deployment_group_name}")
-
-            logger.info("AWS::CodeDeploy::Deployment resource for CFN trigger is NOT defined in this stack. Pipeline will use direct CodeDeploy action.")
-        else:
-            logger.warning("CodeDeploy Application and DeploymentGroup setup skipped as no target ASG was identified.")
 
         logger.info(f"MainOrchestratorStack '{id}': Initialization complete.")
