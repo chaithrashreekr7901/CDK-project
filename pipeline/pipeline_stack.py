@@ -39,7 +39,9 @@ class PipelineStack(Stack):
 
         # IAM Policies for nested stack access to S3 templates
         nested_stack_s3_policy = iam.PolicyStatement(
+            sid="AllowCloudFormationNestedStackAccess",
             effect=iam.Effect.ALLOW,
+            principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
             actions=["s3:GetObject", "s3:GetObjectVersion"],
             resources=[f"{artifact_bucket.bucket_arn}/*"]
         )
