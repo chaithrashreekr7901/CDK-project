@@ -532,7 +532,7 @@ def get_deployment_configurations() -> dict:
  
     # --- EC2 Deployments (Includes direct Instances and Launch Templates) ---
     ec2_deployments_config = {
-        "deploy": False,  # BOOLEAN: Master switch for all EC2-related deployments in this group (direct instances and LTs).
+        "deploy": True,  # BOOLEAN: Master switch for all EC2-related deployments in this group (direct instances and LTs).
         "description": "Configuration group for EC2 Instance and Launch Template deployments.",
         
         "defaults": { # Default settings applied to all direct instances and launch templates below, unless overridden.
