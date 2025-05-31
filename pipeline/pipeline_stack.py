@@ -7,6 +7,7 @@ from aws_cdk import (
     aws_codepipeline_actions as codepipeline_actions,
     aws_codebuild as codebuild,
     aws_s3 as s3,
+    aws_cloudformation as cloudformation,
     Environment,
 )
 from constructs import Construct
@@ -35,6 +36,7 @@ class PipelineStack(Stack):
             versioned=True
         )
 
+        # Grant S3 access to CloudFormation via bucket resource policy (resource-based)
         artifact_bucket.add_to_resource_policy(
             iam.PolicyStatement(
                 sid="AllowCloudFormationNestedStackAccess",
