@@ -7,7 +7,6 @@ from aws_cdk import (
     aws_codepipeline_actions as codepipeline_actions,
     aws_codebuild as codebuild,
     aws_s3 as s3,
-    aws_codedeploy as codedeploy,
     aws_cloudformation as cloudformation,
     Environment,
 )
@@ -37,13 +36,15 @@ class PipelineStack(Stack):
             versioned=True
         )
 
-        # IAM Policies for nested stack access to S3 templates
-        nested_stack_s3_policy = iam.PolicyStatement(
-            sid="AllowCloudFormationNestedStackAccess",
-            effect=iam.Effect.ALLOW,
-            principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
-            actions=["s3:GetObject", "s3:GetObjectVersion"],
-            resources=[f"{artifact_bucket.bucket_arn}/*"]
+        # Grant S3 access to CloudFormation via bucket resource policy (resource-based)
+        artifact_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowCloudFormationNestedStackAccess",
+                effect=iam.Effect.ALLOW,
+                principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
+                actions=["s3:GetObject", "s3:GetObjectVersion"],
+                resources=[f"{artifact_bucket.bucket_arn}/*"]
+            )
         )
 
         # IAM Roles
@@ -54,7 +55,6 @@ class PipelineStack(Stack):
                 iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
             ]
         )
-        codebuild_role.add_to_policy(nested_stack_s3_policy)
 
         pipeline_role = iam.Role(
             self, "CodePipelineRole",
@@ -63,7 +63,6 @@ class PipelineStack(Stack):
                 iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
             ]
         )
-        pipeline_role.add_to_policy(nested_stack_s3_policy)
 
         # Build Project: Synth + Bundle
         build_project = codebuild.PipelineProject(
