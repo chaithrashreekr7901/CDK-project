@@ -71,8 +71,6 @@ class PipelineStack(Stack):
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
         app_bundle_output = codepipeline.Artifact("AppBundleOutput")
 
-        
-
         # Pipeline definition (excluding Deploy_Application stage)
         pipeline = codepipeline.Pipeline(
             self,
