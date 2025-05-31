@@ -6,14 +6,15 @@ phases:
       nodejs: 18
       python: 3.11
     commands:
-      - echo "Installing AWS CDK and Python dependencies..."
+      - echo "Installing AWS CDK..."
       - npm install -g aws-cdk
+      - echo "Installing Python dependencies..."
       - pip install -r requirements.txt
 
   pre_build:
     commands:
       - echo "Synthesizing the CDK app..."
-      - cdk synth --output cdk.out
+      - cdk synth MyMainInfrastructureStack --output cdk.out
 
   build:
     commands:
@@ -30,4 +31,4 @@ artifacts:
     CdkTemplatesOutput:
       base-directory: cdk.out
       files:
-        - 'MyMainInfrastructureStack.template.json'
+        - '**/*'

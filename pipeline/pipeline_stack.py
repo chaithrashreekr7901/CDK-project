@@ -7,11 +7,12 @@ from aws_cdk import (
     aws_codepipeline_actions as codepipeline_actions,
     aws_codebuild as codebuild,
     aws_s3 as s3,
+    aws_codedeploy as codedeploy,
+    aws_cloudformation as cloudformation,
     Environment,
 )
 from constructs import Construct
 import typing
-
 
 class PipelineStack(Stack):
     def __init__(
@@ -23,120 +24,43 @@ class PipelineStack(Stack):
         source_repo_name: str,
         source_branch_name: str,
         cdk_infra_stack_name: str,
+        codedeploy_application_name: str,
+        codedeploy_deployment_group_name: str,
         env: typing.Optional[Environment] = None,
         **kwargs,
     ) -> None:
-        super().__init__(scope, construct_id, env=env)
+        super().__init__(scope, construct_id, env=env, **kwargs)
 
-        # Artifact bucket for pipeline
+        # Artifact S3 bucket
         artifact_bucket = s3.Bucket(
-            self,
-            "PipelineArtifactsBucket",
+            self, "PipelineArtifactsBucket",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
-            versioned=True,
-            encryption=s3.BucketEncryption.S3_MANAGED,
-            block_public_access=s3.BlockPublicAccess(
-            block_public_acls=False,
-            block_public_policy=False,
-            ignore_public_acls=False,
-            restrict_public_buckets=False,
-            ),  # Allow public access
-            public_read_access=True,
+            versioned=True
         )
 
-        # Deploy bucket for CDK templates
-        template_deploy_bucket = s3.Bucket(
-            self,
-            "CdkTemplateDeployBucket",
-            removal_policy=RemovalPolicy.DESTROY,
-            auto_delete_objects=True,
-            versioned=True,
-            encryption=s3.BucketEncryption.S3_MANAGED,
-            block_public_access=s3.BlockPublicAccess(
-            block_public_acls=False,
-            block_public_policy=False,
-            ignore_public_acls=False,
-            restrict_public_buckets=False,
-            ),
- # Allow public access
-            public_read_access=True,
-        )
-
-        # Grant CloudFormation access to the deploy bucket
-        template_deploy_bucket.add_to_resource_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "s3:GetObject",
-                    "s3:GetObjectVersion",
-                    "s3:GetBucketVersioning",
-                    "s3:ListBucket"
-                ],
-                principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
-                resources=[
-                    template_deploy_bucket.bucket_arn,
-                    f"{template_deploy_bucket.bucket_arn}/*"
-                ],
-            )
-        )
-
-        # Grant CloudFormation access to artifact bucket as well
-        artifact_bucket.add_to_resource_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
-                actions=[
-                    "s3:GetObject",
-                    "s3:GetObjectVersion",
-                    "s3:GetBucketVersioning",
-                    "s3:ListBucket",
-                ],
-                resources=[
-                    artifact_bucket.bucket_arn,
-                    f"{artifact_bucket.bucket_arn}/*",
-                ],
-            )
-        )
-
-        # CodeBuild role
+        # IAM Roles
         codebuild_role = iam.Role(
-            self,
-            "CodeBuildRole",
+            self, "CodeBuildRole",
             assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
+            ]
         )
-        codebuild_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3FullAccess"))
-        codebuild_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AWSCloudFormationFullAccess"))
-        codebuild_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonEC2ReadOnlyAccess"))
-        codebuild_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMReadOnlyAccess"))
-
-        # CodePipeline role
         pipeline_role = iam.Role(
-            self,
-            "CodePipelineRole",
+            self, "CodePipelineRole",
             assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
-        )
-        pipeline_role.add_managed_policy(iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3ReadOnlyAccess"))
-        pipeline_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "codebuild:*",
-                    "cloudformation:*",
-                    "iam:PassRole",
-                    "codepipeline:*",
-                ],
-                resources=["*"],
-            )
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
+            ]
         )
 
-        # CodeBuild project
+        # Build Project: Synth + Bundle
         build_project = codebuild.PipelineProject(
             self,
             "CdkSynthAndBundleProject",
             project_name=f"{self.stack_name}-SynthAndBundle",
             role=codebuild_role,
-            environment_variables={
-                "CDK_TEMPLATE_BUCKET_NAME": codebuild.BuildEnvironmentVariable(value=template_deploy_bucket.bucket_name)
-            },
             build_spec=codebuild.BuildSpec.from_source_filename("buildspec_cdk_synth_bundle.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
@@ -149,7 +73,17 @@ class PipelineStack(Stack):
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
         app_bundle_output = codepipeline.Artifact("AppBundleOutput")
 
-        # Define the pipeline
+        # CodeDeploy app and deployment group (no longer used)
+        codedeploy_app = codedeploy.ServerApplication.from_server_application_name(
+            self, "CDApp", server_application_name=codedeploy_application_name
+        )
+        codedeploy_group = codedeploy.ServerDeploymentGroup.from_server_deployment_group_attributes(
+            self, "CDGroup",
+            application=codedeploy_app,
+            deployment_group_name=codedeploy_deployment_group_name
+        )
+
+        # Pipeline definition (excluding Deploy_Application stage)
         pipeline = codepipeline.Pipeline(
             self,
             "CloudFormationDeploymentPipeline",
@@ -185,17 +119,16 @@ class PipelineStack(Stack):
                     stage_name="Deploy_Infrastructure",
                     actions=[
                         codepipeline_actions.CloudFormationCreateUpdateStackAction(
-                            action_name=f"Deploy_{cdk_infra_stack_name}",
+                            action_name="Deploy_CF_Template",
                             stack_name=cdk_infra_stack_name,
                             template_path=cdk_output.at_path("MyMainInfrastructureStack.template.json"),
                             admin_permissions=True,
                         )
                     ],
-                ),
-            ],
+                )
+            ]
         )
 
         # Outputs
         cdk.CfnOutput(self, "PipelineName", value=pipeline.pipeline_name)
         cdk.CfnOutput(self, "ArtifactBucket", value=artifact_bucket.bucket_name)
-        cdk.CfnOutput(self, "TemplateDeployBucket", value=template_deploy_bucket.bucket_name)
