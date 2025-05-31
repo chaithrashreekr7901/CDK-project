@@ -25,3 +25,7 @@ artifacts:
       base-directory: cdk.out
       files:
         - '**/*'
+    AppBundleOutput:                
+      base-directory: .            
+      files:
+        - '**/*'
