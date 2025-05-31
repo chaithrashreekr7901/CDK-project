@@ -65,8 +65,8 @@ GITHUB_BRANCH = config.get("github_branch_name", "CRMP-cdk")
 # Names for CodeDeploy resources - these should match what MainOrchestratorStack creates
 # You might want to get these from config as well, or ensure they are consistently named.
 # Example: If MainOrchestratorStack names them based on its own stack name.
-CODEPLOY_APPLICATION_NAME = f"{main_stack_name}-EC2App" # Example name
-CODEPLOY_DEPLOYMENT_GROUP_NAME = f"{main_stack_name}-EC2-DG" # Example name
+# CODEPLOY_APPLICATION_NAME = f"{main_stack_name}-EC2App" # Example name
+# CODEPLOY_DEPLOYMENT_GROUP_NAME = f"{main_stack_name}-EC2-DG" # Example name
 
 pipeline_stack_name = config.get("pipeline_stack_name", "MyCDKDirectCodeDeployPipeline") # Renamed for clarity
 pipeline_description = config.get("pipeline_stack_description", f"CI/CD Pipeline for {main_stack_name} with direct CodeDeploy action.")
