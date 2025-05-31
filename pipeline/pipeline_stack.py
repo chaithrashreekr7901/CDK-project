@@ -118,7 +118,7 @@ class PipelineStack(Stack):
                         codepipeline_actions.CloudFormationCreateUpdateStackAction(
                             action_name="Deploy_CF_Template",
                             stack_name=cdk_infra_stack_name,
-                            template_path=cdk_output.at_path(f"MyMainInfrastructureStack.template.json"),
+                            template_path=cdk_output.at_path("MyMainInfrastructureStack.template.json"),
                             admin_permissions=True,
                         )
                     ],
