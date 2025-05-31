@@ -24,8 +24,6 @@ class PipelineStack(Stack):
         source_repo_name: str,
         source_branch_name: str,
         cdk_infra_stack_name: str,
-        codedeploy_application_name: str,
-        codedeploy_deployment_group_name: str,
         env: typing.Optional[Environment] = None,
         **kwargs,
     ) -> None:
@@ -73,15 +71,7 @@ class PipelineStack(Stack):
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
         app_bundle_output = codepipeline.Artifact("AppBundleOutput")
 
-        # CodeDeploy app and deployment group (no longer used)
-        codedeploy_app = codedeploy.ServerApplication.from_server_application_name(
-            self, "CDApp", server_application_name=codedeploy_application_name
-        )
-        codedeploy_group = codedeploy.ServerDeploymentGroup.from_server_deployment_group_attributes(
-            self, "CDGroup",
-            application=codedeploy_app,
-            deployment_group_name=codedeploy_deployment_group_name
-        )
+        
 
         # Pipeline definition (excluding Deploy_Application stage)
         pipeline = codepipeline.Pipeline(
