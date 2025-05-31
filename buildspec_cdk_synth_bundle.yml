@@ -15,6 +15,9 @@ phases:
     commands:
       - echo "Synthesizing the CDK app..."
       - cdk synth MyMainInfrastructureStack --output cdk.out
+      - echo "Renaming latest template to main-template.json..."
+      - LATEST_TEMPLATE=$(find cdk.out -type f -name "*.template.json" | head -n 1)
+      - cp "$LATEST_TEMPLATE" cdk.out/main-template.json
 artifacts:
   secondary-artifacts:
     CdkTemplatesOutput:
