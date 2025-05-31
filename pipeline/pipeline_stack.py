@@ -37,6 +37,13 @@ class PipelineStack(Stack):
             versioned=True
         )
 
+        # IAM Policies for nested stack access to S3 templates
+        nested_stack_s3_policy = iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=["s3:GetObject", "s3:GetObjectVersion"],
+            resources=[f"{artifact_bucket.bucket_arn}/*"]
+        )
+
         # IAM Roles
         codebuild_role = iam.Role(
             self, "CodeBuildRole",
@@ -45,6 +52,8 @@ class PipelineStack(Stack):
                 iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
             ]
         )
+        codebuild_role.add_to_policy(nested_stack_s3_policy)
+
         pipeline_role = iam.Role(
             self, "CodePipelineRole",
             assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
@@ -52,6 +61,7 @@ class PipelineStack(Stack):
                 iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
             ]
         )
+        pipeline_role.add_to_policy(nested_stack_s3_policy)
 
         # Build Project: Synth + Bundle
         build_project = codebuild.PipelineProject(
@@ -71,7 +81,7 @@ class PipelineStack(Stack):
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
         app_bundle_output = codepipeline.Artifact("AppBundleOutput")
 
-        # Pipeline definition (excluding Deploy_Application stage)
+        # Pipeline definition
         pipeline = codepipeline.Pipeline(
             self,
             "CloudFormationDeploymentPipeline",
