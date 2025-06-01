@@ -62,13 +62,13 @@ class PipelineStack(Stack):
             ]
         )
 
-        # Build Project: Synth + Bundle
+        # Build Project: CDK Synth Only
         build_project = codebuild.PipelineProject(
             self,
-            "CdkSynthAndBundleProject",
-            project_name=f"{self.stack_name}-SynthAndBundle",
+            "CdkSynthProject",
+            project_name=f"{self.stack_name}-CDKSynth",
             role=codebuild_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_cdk_synth_bundle.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec/buildspec_cdk_synth.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
                 privileged=True,
@@ -78,7 +78,6 @@ class PipelineStack(Stack):
         # Artifacts
         source_output = codepipeline.Artifact("SourceCode")
         cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
-        app_bundle_output = codepipeline.Artifact("AppBundleOutput")
 
         # Pipeline definition
         pipeline = codepipeline.Pipeline(
@@ -92,7 +91,7 @@ class PipelineStack(Stack):
                     stage_name="Source",
                     actions=[
                         codepipeline_actions.CodeStarConnectionsSourceAction(
-                            action_name="GitHub_Source",
+                            action_name="GitLab_Source",
                             owner=source_repo_owner,
                             repo=source_repo_name,
                             branch=source_branch_name,
@@ -102,23 +101,23 @@ class PipelineStack(Stack):
                     ],
                 ),
                 codepipeline.StageProps(
-                    stage_name="Build",
+                    stage_name="Synth",
                     actions=[
                         codepipeline_actions.CodeBuildAction(
-                            action_name="CDK_Synth_And_App_Bundle",
+                            action_name="CDK_Synth",
                             project=build_project,
                             input=source_output,
-                            outputs=[cdk_output, app_bundle_output],
+                            outputs=[cdk_output],
                         )
                     ],
                 ),
                 codepipeline.StageProps(
-                    stage_name="Deploy_Infrastructure",
+                    stage_name="Deploy",
                     actions=[
                         codepipeline_actions.CloudFormationCreateUpdateStackAction(
-                            action_name="Deploy_CF_Template",
+                            action_name="Deploy_CF_Stack",
                             stack_name=cdk_infra_stack_name,
-                            template_path=cdk_output.at_path("main-template.json"),
+                            template_path=cdk_output.at_path("main.template.json"),
                             admin_permissions=True,
                         )
                     ],
