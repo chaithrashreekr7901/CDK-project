@@ -7,85 +7,108 @@ from aws_cdk import (
     aws_codepipeline_actions as codepipeline_actions,
     aws_codebuild as codebuild,
     aws_s3 as s3,
-    Environment,
 )
 from constructs import Construct
-import typing
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PipelineStack(Stack):
-    def __init__(
-        self,
-        scope: Construct,
-        construct_id: str,
-        source_connection_arn: str,
-        source_repo_owner: str,
-        source_repo_name: str,
-        source_branch_name: str,
-        env: typing.Optional[Environment] = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(scope, construct_id, env=env, **kwargs)
+    def __init__(self, scope: Construct, construct_id: str,
+                 source_connection_arn: str,
+                 source_repo_owner: str,
+                 source_repo_name: str,
+                 source_branch_name: str,
+                 cdk_app_stack_name: str,
+                 **kwargs) -> None:
+        super().__init__(scope, construct_id, **kwargs)
 
-        # Artifact Bucket for CodePipeline
+        # 1. Artifact bucket
         artifact_bucket = s3.Bucket(
-            self, "PipelineArtifactsBucket",
+            self, "PipelineArtifactBucket",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
-            versioned=True
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL
         )
 
-        # IAM Roles
+        # 2. IAM Role for CodeBuild
         codebuild_role = iam.Role(
             self, "CodeBuildRole",
             assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
-            ]
+            description="Role for all CodeBuild projects in pipeline"
         )
+        artifact_bucket.grant_read_write(codebuild_role)
 
-        pipeline_role = iam.Role(
-            self, "CodePipelineRole",
-            assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess")
-            ]
-        )
+        codebuild_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            resources=["*"]
+        ))
 
-        # Source and Artifacts
-        source_output = codepipeline.Artifact("SourceCode")
-        synth_output = codepipeline.Artifact("CdkSynthOutput")
+        codebuild_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "sts:AssumeRole",
+                "iam:PassRole",
+                "cloudformation:*",
+                "ec2:Describe*",
+                "s3:*"
+            ],
+            resources=["*"]
+        ))
 
-        # CodeBuild Project for CDK Synth
+        # 3. CodeBuild Projects (excluding bootstrap)
         synth_project = codebuild.PipelineProject(
-            self,
-            "CdkSynthProject",
-            project_name=f"{self.stack_name}-CDKSynth",
+            self, "CdkSynthProject",
+            project_name=f"{Stack.of(self).stack_name}-Synth",
             role=codebuild_role,
             build_spec=codebuild.BuildSpec.from_source_filename("buildspec/buildspec_cdk_synth.yml"),
             environment=codebuild.BuildEnvironment(
-                build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
-                privileged=True,
-            ),
+                build_image=codebuild.LinuxBuildImage.STANDARD_7_0
+            )
         )
 
-        # CodeBuild Project for CDK Deploy
         deploy_project = codebuild.PipelineProject(
-            self,
-            "CdkDeployProject",
-            project_name=f"{self.stack_name}-CDKDeploy",
+            self, "CdkDeployProject",
+            project_name=f"{Stack.of(self).stack_name}-Deploy",
             role=codebuild_role,
             build_spec=codebuild.BuildSpec.from_source_filename("buildspec/buildspec_cdk_deploy.yml"),
             environment=codebuild.BuildEnvironment(
-                build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
-                privileged=True,
-            ),
+                build_image=codebuild.LinuxBuildImage.STANDARD_7_0
+            )
         )
 
-        # Pipeline Definition
+        # 4. Artifacts
+        source_output = codepipeline.Artifact("SourceOutput")
+        synth_output = codepipeline.Artifact("SynthOutput")
+        deploy_output = codepipeline.Artifact("DeployOutput")
+
+        # 5. CodePipeline Role
+        pipeline_role = iam.Role(
+            self, "CodePipelineRole",
+            assumed_by=iam.ServicePrincipal("codepipeline.amazonaws.com"),
+            description="Role for CodePipeline"
+        )
+
+        artifact_bucket.grant_read_write(pipeline_role)
+        codebuild_role.grant_pass_role(pipeline_role)
+
+        pipeline_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "codebuild:StartBuild", "codebuild:BatchGetBuilds", "codebuild:StopBuild",
+                "codestar-connections:UseConnection",
+                "cloudformation:*", "iam:PassRole", "s3:GetObject", "s3:ListBucket"
+            ],
+            resources=["*"]
+        ))
+
+        # 6. CodePipeline Definition (Bootstrap stage removed)
         pipeline = codepipeline.Pipeline(
-            self,
-            "CloudResourcePipeline",
-            pipeline_name=f"{self.stack_name}-Pipeline",
+            self, "CdkPipeline",
+            pipeline_name=f"{Stack.of(self).stack_name}-Pipeline",
             artifact_bucket=artifact_bucket,
             role=pipeline_role,
             stages=[
@@ -93,14 +116,15 @@ class PipelineStack(Stack):
                     stage_name="Source",
                     actions=[
                         codepipeline_actions.CodeStarConnectionsSourceAction(
-                            action_name="GitSource",
+                            action_name="GitHub_Source",
                             owner=source_repo_owner,
                             repo=source_repo_name,
                             branch=source_branch_name,
                             connection_arn=source_connection_arn,
                             output=source_output,
+                            trigger_on_push=True
                         )
-                    ],
+                    ]
                 ),
                 codepipeline.StageProps(
                     stage_name="Synth",
@@ -109,9 +133,9 @@ class PipelineStack(Stack):
                             action_name="CDK_Synth",
                             project=synth_project,
                             input=source_output,
-                            outputs=[synth_output],
+                            outputs=[synth_output]
                         )
-                    ],
+                    ]
                 ),
                 codepipeline.StageProps(
                     stage_name="Deploy",
@@ -119,13 +143,12 @@ class PipelineStack(Stack):
                         codepipeline_actions.CodeBuildAction(
                             action_name="CDK_Deploy",
                             project=deploy_project,
-                            input=synth_output,
+                            input=source_output,
+                            outputs=[deploy_output]
                         )
-                    ],
-                ),
+                    ]
+                )
             ]
         )
 
-        # Outputs
-        cdk.CfnOutput(self, "PipelineName", value=pipeline.pipeline_name)
-        cdk.CfnOutput(self, "ArtifactBucket", value=artifact_bucket.bucket_name)
+        logger.info(f"Pipeline created: {pipeline.pipeline_name}")
