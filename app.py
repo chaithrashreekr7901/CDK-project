@@ -76,7 +76,6 @@ PipelineStack(app, pipeline_stack_name,
     source_repo_owner=GITHUB_REPO_OWNER,
     source_repo_name=GITHUB_REPO_NAME,
     source_branch_name=GITHUB_BRANCH,
-    cdk_infra_stack_name=main_stack_name,
     env=env,
     description=pipeline_description
 )
