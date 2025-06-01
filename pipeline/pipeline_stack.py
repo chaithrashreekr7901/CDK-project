@@ -68,7 +68,7 @@ class PipelineStack(Stack):
             "CdkSynthProject",
             project_name=f"{self.stack_name}-CDKSynth",
             role=codebuild_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec/buildspec_cdk_synth.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec/buildspec_cdk_synth_bundle.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
                 privileged=True,
