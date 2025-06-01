@@ -74,7 +74,7 @@ class PipelineStack(Stack):
             "CdkDeployProject",
             project_name=f"{self.stack_name}-CDKDeploy",
             role=codebuild_role,
-            build_spec=codebuild.BuildSpec.from_source_filename("CRMP-cdk/buildspec/buildspec_cdk_deploy.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec/buildspec_cdk_deploy.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
                 privileged=True,
