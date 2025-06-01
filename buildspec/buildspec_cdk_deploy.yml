@@ -3,16 +3,15 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      python: 3.11
+      nodejs: 18
+      python: 3.10
     commands:
-      - echo "Installing AWS CDK and dependencies..."
       - npm install -g aws-cdk
       - pip install -r requirements.txt
 
   build:
     commands:
-      - echo "Deploying CDK stack..."
-      - cdk deploy --require-approval never
+      - cdk deploy MyMainInfrastructureStack 
 
 artifacts:
   files:
