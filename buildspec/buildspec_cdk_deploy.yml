@@ -5,16 +5,15 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - echo "Installing CDK and dependencies..."
+      - echo "Installing AWS CDK and dependencies..."
       - npm install -g aws-cdk
       - pip install -r requirements.txt
 
   build:
     commands:
-      - echo "Synthesizing CDK app..."
-      - cdk synth
+      - echo "Deploying CDK stack..."
+      - cdk deploy --require-approval never
 
 artifacts:
-  base-directory: cdk.out
   files:
     - '**/*'

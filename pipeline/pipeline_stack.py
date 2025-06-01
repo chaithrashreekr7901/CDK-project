@@ -21,28 +21,17 @@ class PipelineStack(Stack):
         source_repo_owner: str,
         source_repo_name: str,
         source_branch_name: str,
-        cdk_infra_stack_name: str,
         env: typing.Optional[Environment] = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, env=env, **kwargs)
 
-        # Artifact S3 bucket
+        # Artifact Bucket for CodePipeline
         artifact_bucket = s3.Bucket(
             self, "PipelineArtifactsBucket",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
             versioned=True
-        )
-
-        artifact_bucket.add_to_resource_policy(
-            iam.PolicyStatement(
-                sid="AllowCloudFormationNestedStackAccess",
-                effect=iam.Effect.ALLOW,
-                principals=[iam.ServicePrincipal("cloudformation.amazonaws.com")],
-                actions=["s3:GetObject", "s3:GetObjectVersion"],
-                resources=[f"{artifact_bucket.bucket_arn}/*"]
-            )
         )
 
         # IAM Roles
@@ -62,8 +51,12 @@ class PipelineStack(Stack):
             ]
         )
 
-        # Build Project: CDK Synth Only
-        build_project = codebuild.PipelineProject(
+        # Source and Artifacts
+        source_output = codepipeline.Artifact("SourceCode")
+        synth_output = codepipeline.Artifact("CdkSynthOutput")
+
+        # CodeBuild Project for CDK Synth
+        synth_project = codebuild.PipelineProject(
             self,
             "CdkSynthProject",
             project_name=f"{self.stack_name}-CDKSynth",
@@ -75,14 +68,23 @@ class PipelineStack(Stack):
             ),
         )
 
-        # Artifacts
-        source_output = codepipeline.Artifact("SourceCode")
-        cdk_output = codepipeline.Artifact("CdkTemplatesOutput")
+        # CodeBuild Project for CDK Deploy
+        deploy_project = codebuild.PipelineProject(
+            self,
+            "CdkDeployProject",
+            project_name=f"{self.stack_name}-CDKDeploy",
+            role=codebuild_role,
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec/buildspec_cdk_deploy.yml"),
+            environment=codebuild.BuildEnvironment(
+                build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
+                privileged=True,
+            ),
+        )
 
-        # Pipeline definition
+        # Pipeline Definition
         pipeline = codepipeline.Pipeline(
             self,
-            "CloudFormationDeploymentPipeline",
+            "CloudResourcePipeline",
             pipeline_name=f"{self.stack_name}-Pipeline",
             artifact_bucket=artifact_bucket,
             role=pipeline_role,
@@ -91,7 +93,7 @@ class PipelineStack(Stack):
                     stage_name="Source",
                     actions=[
                         codepipeline_actions.CodeStarConnectionsSourceAction(
-                            action_name="GitLab_Source",
+                            action_name="GitSource",
                             owner=source_repo_owner,
                             repo=source_repo_name,
                             branch=source_branch_name,
@@ -105,23 +107,22 @@ class PipelineStack(Stack):
                     actions=[
                         codepipeline_actions.CodeBuildAction(
                             action_name="CDK_Synth",
-                            project=build_project,
+                            project=synth_project,
                             input=source_output,
-                            outputs=[cdk_output],
+                            outputs=[synth_output],
                         )
                     ],
                 ),
                 codepipeline.StageProps(
                     stage_name="Deploy",
                     actions=[
-                        codepipeline_actions.CloudFormationCreateUpdateStackAction(
-                            action_name="Deploy_CF_Stack",
-                            stack_name=cdk_infra_stack_name,
-                            template_path=cdk_output.at_path("main.template.json"),
-                            admin_permissions=True,
+                        codepipeline_actions.CodeBuildAction(
+                            action_name="CDK_Deploy",
+                            project=deploy_project,
+                            input=synth_output,
                         )
                     ],
-                )
+                ),
             ]
         )
 
