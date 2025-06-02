@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>My Simple Web App</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f0f0f0; }
+        h1 { color: #333; }
+        p { color: #666; }
+        .version { font-size: 0.8em; color: #999; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Hello from my Simple Web App!</h1>
+    <p>This page was deployed via AWS CodePipeline and CodeDeploy.</p>
+    <div class="version">Application Version: 1.0.0</div>
+    <div class="instance-info" id="instanceInfo"></div>
+
+    <script>
+        // A simple script to show instance hostname (requires instance metadata service)
+        fetch('http://169.254.169.254/latest/meta-data/hostname')
+            .then(response => response.text())
+            .then(data => {
+                document.getElementById('instanceInfo').innerText = `Running on: ${data}`;
+            })
+            .catch(error => {
+                document.getElementById('instanceInfo').innerText = `Could not fetch instance info.`;
+                console.error('Error fetching instance metadata:', error);
+            });
+    </script>
+</body>
+</html>
