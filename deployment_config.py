@@ -26,7 +26,7 @@ def get_deployment_configurations() -> dict:
 
     # This VPC will be deployed.
     vpc1_core = {
-        'manage_vpc':True, # <<< This VPC WILL BE DEPLOYED
+        'manage_vpc':False, # <<< This VPC WILL BE DEPLOYED
         'creation_mode': 'NEW',
         'existing_vpc_lookup': {'enabled': False, 'by_id': None, 'by_tags': {}},
         'name': "PrimaryDevVPC", 'cidr': "10.10.0.0/16", 
@@ -879,7 +879,9 @@ def get_deployment_configurations() -> dict:
                         "profile_name": "MyExampleAppInstanceProfile", # STRING (Optional): Physical name for the created IAM Instance Profile. Auto-generated if not provided.
                         "managed_policy_arns": [ # LIST of STRINGS: ARNs of AWS managed policies to attach.
                             "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-                            "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+                            "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+                            "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore", # Essential for SSM Agent
+                            "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess", 
                         ],
                         "custom_policy_statements": [ # LIST of OBJECTS: Define inline policy statements.
                             # {
@@ -1888,13 +1890,135 @@ def get_deployment_configurations() -> dict:
             }
         ]
     }
+# cdk_project/deployment_config.py (Snippet for iam_roles_config)
 
-# end of "instances" list
- # end of ec2_deployments_config
+    iam_roles_config = {
+    "deploy": True,
+    "description": "IAM Roles managed by the orchestrator for various services.",
+    "roles": [
+        {
+            "id": "CodeDeployServiceRole", # Logical ID for this role
+            "enabled": True,
+            "config": {
+                "role_name": "MyOrchestratorCodeDeployServiceRole", # Actual AWS IAM role name
+                "assumed_by": "codedeploy.amazonaws.com",
+                "managed_policies": ["arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"]
+            }
+        },
+        {
+            "id": "CodePipelineServiceRole", # Logical ID for CodePipeline Service Role
+            "enabled": True,
+            "config": {
+                "role_name": "MyApplicationCodePipelineServiceRole", # Actual AWS IAM role name
+                "assumed_by": "codepipeline.amazonaws.com",
+                "managed_policies": [
+                    "arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess", # Broad access for simplicity
+                    # In production, consider limiting to:
+                    # "arn:aws:iam::aws:policy/AWSCodeCommitReadOnly",
+                    # "arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess",
+                    # "arn:aws:iam::aws:policy/AWSCodeDeployDeployerAccess",
+                    # "arn:aws:iam::aws:policy/AmazonS3FullAccess", # For artifact bucket
+                    # "arn:aws:iam::aws:policy/service-role/AWSCodeStarSourceConnection" # If using CodeStarSourceConnection
+                ]
+            }
+        },
+        # You could define other roles here, e.g., a custom CodeBuild service role
+        # for infrastructure pipelines, or cross-account roles.
+    ]
+}
+
+# The rest of your final_config would then include this:
+# final_config = {
+#     # ... other sections ...
+#     "iam_roles": iam_roles_config, # <-- Now includes CodePipeline role
+#     "pipeline_deployments": pipeline_deployments_config,
+# }
+    
+    pipeline_deployments_config = {
+        "deploy": True, # Global switch to enable/disable application pipelines
+        "description": "Configuration group for CI/CD pipelines deploying applications to EC2/ASG.",
+        "pipelines": [
+            {
+                "id": "WebAppDeploymentPipeline", # Logical ID for this pipeline within the config
+                "enabled": True, # Enable/disable this specific pipeline
+                "target_resource_type": "EC2_INSTANCE", # "EC2_INSTANCE" or "AUTOSCALING_GROUP"
+                # "target_resource_ref_id": "MyStandaloneWebServer1", # Logical ID from ec2_deployments.instances or ec2_deployments.auto_scaling_groups
+                # Alternatively, if you need to deploy to an existing resource not created by this CDK:
+                "existing_target_resource_id": "i-0a73a8605a4a5baab", # Physical EC2 Instance ID or ASG Name/ARN
+                "existing_target_vpc_id": "vpc-0682a04278f37a95c", # Required for existing targets to find the VPC
+                "existing_target_instance_name_tag": "web-server -1", # <--- UPDATE THIS EXACTLY
+
+
+                "source_config": {
+                    "source_type": "GITHUB", # "GITHUB", "CODECOMMIT", "S3"
+                    # --- GitHub Specific ---
+                    "github_connection_arn": "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1", # REPLACE
+                    "github_repo_owner": "chaithrashreekr7901",
+                    "github_repo_name": "CDK-project", # The repository containing your application code
+                    "github_branch_name": "feature/simple-app-deploy", # The branch to monitor for changes
+                    # "github_build_spec_path": "buildspec.yml", # Optional: Path to buildspec file in repo, default is root
+                    # "github_full_clone": False, # Optional: True for full history, False for shallow clone (faster)
+                },
+                "build_config": { # Optional: If you need a build step
+                    "enabled": True,
+                    "build_project_name": "SimpleWebAppBuild", # Optional: Name for the CodeBuild project
+                    "build_compute_type": "SMALL", # e.g., "BUILD_GENERAL1_SMALL", "BUILD_GENERAL1_MEDIUM"
+	                "build_image": "aws/codebuild/standard:5.0", # A common build image
+                    #"build_image": "ubuntu/aws-codebuild-builder:latest", # Or a specific CodeBuild managed image ARN
+		            "commands_build": ["echo 'No complex build steps for HTML, just copy artifacts.'"],
+		            "artifacts_paths": ["simple-webapp/**/*"], # Capture the entire simple-webapp folder as artifacts
+		
+                   # "environment_variables": { # Optional: Env vars for CodeBuild
+                      #  "SOME_VAR": {"value": "some-value", "type": "PLAINTEXT"},
+                        #"DB_SECRET_ARN": {"value": "arn:aws:secretsmanager:...", "type": "SECRETS_MANAGER"}
+                    #},
+                   # "commands_pre_build": ["echo 'Starting build...'"], # List of commands
+                 #   "commands_build": ["npm install", "npm run build"],
+                 #    "commands_post_build": ["echo 'Build complete'"],
+                  #  "artifacts_paths": ["dist/**/*", "appspec.yml", "scripts/**/*"], # Paths to artifacts to be passed to deploy
+                },
+                "deploy_config": {
+                    "enabled": True,
+                    "deployment_strategy": "CODE_DEPLOY_EC2", # "CODE_DEPLOY_EC2", "SSM_RUN_COMMAND", "S3_SYNC"
+                    
+                    # --- CodeDeploy EC2 Specific ---
+                    "codedeploy_application_name": "MySimpleWebApp", # Optional: Name for CodeDeploy Application
+                    "codedeploy_deployment_group_name": "MySimpleWebAppDG", # Optional: Name for CodeDeploy Deployment Group
+                    "codedeploy_appspec_path": "simple-webapp/appspec.yml", # Path to appspec.yml in artifacts
+                    "create_codedeploy_service_role": False, # <-- NEW FLAG: Set to True to create a new role
+                    "codedeploy_service_role_ref_id": "CodeDeployServiceRole",
+                    # "codedeploy_service_role_arn": "arn:aws:iam::198484116691:role/service-role/aws-codedeploy-service-role", # REPLACE: Ensure this role exists or is created by your infra stack
+                    "codedeploy_install_agent": True, # Optional: Automatically install CodeDeploy agent via UserData (if target is EC2/ASG and not already done)
+                    "codedeploy_alarm_arns": [], # Optional: List of CloudWatch Alarm ARNs for rollback on failure
+                    "codedeploy_deployment_config_name": "CodeDeployDefault.OneAtATime", # e.g., "CodeDeployDefault.OneAtATime", "CodeDeployDefault.AllAtOnce"
+                    
+                    # --- SSM Run Command Specific (Alternative for simple deployments) ---
+                    # "ssm_document_name": "AWS-RunShellScript", # e.g., "AWS-RunShellScript", "AWS-ApplyPatchBaseline"
+                    # "ssm_commands": [ # List of commands to run on target instances
+                    #     "sudo yum update -y",
+                    #     "sudo systemctl restart my-app-service"
+                    # ],
+                    # "ssm_timeout_seconds": 600,
+                    
+                    # --- S3 Sync Specific (For static files, e.g., to a website bucket) ---
+                    # "s3_target_bucket_id": "AppConfigData", # Logical ID from s3_deployments.buckets
+                    # "s3_target_bucket_prefix": "app-static-files/",
+                    # "s3_cloud_front_distribution_id": "MyWebAppCFDistribution", # Optional: If you have a CloudFront distribution to invalidate
+                },
+              
+            "tags": {
+                "WebAppName": "SimpleHtmlApp",
+                "DeploymentManagedBy": "CodePipeline"
+            },
+            "codepipeline_service_role_ref_id": "CodePipelineServiceRole", # NEW FIELD
+        },
+            # Add more application deployment pipelines here
+        ]
+    }
 
     final_config = {
         "vpcs": {
-            "deploy": True, # Example: VPCs are globally enabled
+            "deploy": False, # Example: VPCs are globally enabled
             "description": "Configuration group for all VPC instance deployments.",
             "instances": [vpc_instance_1_config, vpc_instance_2_config] # Assuming these are defined
         },
@@ -1905,7 +2029,9 @@ def get_deployment_configurations() -> dict:
         },
         "rds_deployments": rds_deployments_config, # Assuming this is defined
         "s3_deployments": s3_deployments_config,   # Assuming this is defined
-        "ec2_deployments": ec2_deployments_config  # <<< Include the EC2 config
+        "ec2_deployments": ec2_deployments_config,  # <<< Include the EC2 config
+        "iam_roles": iam_roles_config,
+        "pipeline_deployments": pipeline_deployments_config,
     }
     logger.info(f"DEBUG: Keys in final_config: {list(final_config.keys()) if isinstance(final_config, dict) else 'Not a dict'}")
     return final_config

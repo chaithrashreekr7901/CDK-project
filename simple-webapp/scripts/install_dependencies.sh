@@ -1,16 +1,21 @@
 #!/bin/bash
-echo "Installing application dependencies and setting up environment..."
-# Ensure Apache is installed (if not already by user data)
-yum update -y
-yum install -y httpd
+# scripts/install_dependencies.sh
+# This script installs necessary dependencies (e.g., httpd)
 
-# Ensure /var/www/html exists and has correct permissions
-mkdir -p /var/www/html
-chown -R apache:apache /var/www/html/
-chmod -R 755 /var/www/html/
+echo "--- CodeDeploy: Running BeforeInstall hook (install_dependencies.sh) ---"
+echo "Updating yum packages..."
+sudo yum update -y
+if [ $? -ne 0 ]; then
+  echo "Error: yum update failed." >&2
+  exit 1
+fi
 
-# Configure httpd to listen on 8080 (if not already by user data)
-# This check prevents re-adding if already present
-grep -q "Listen 8080" /etc/httpd/conf/httpd.conf || sed -i 's/Listen 80/Listen 8080/' /etc/httpd/conf/httpd.conf
-systemctl enable httpd # Ensure it starts on boot
-echo "Dependencies installed and permissions set."
+echo "Installing httpd..."
+sudo yum install -y httpd
+if [ $? -ne 0 ]; then
+  echo "Error: httpd installation failed." >&2
+  exit 1
+fi
+
+echo "--- CodeDeploy: Finished BeforeInstall hook ---"
+exit 0
