@@ -1,24 +1,12 @@
-version: 0.0
-os: linux
-files:
-  - source: index.html
-    destination: /var/www/html/
-  - source: scripts/
-    destination: /tmp/codedeploy/scripts/
-
-permissions:
-  - object: /tmp/codedeploy/scripts/
-    pattern: "**"
-    owner: root
-    group: root
-    mode: 755
-
 hooks:
   ApplicationStop:
     - location: scripts/stop_server.sh
       timeout: 60
       runas: root
   BeforeInstall:
+    - location: scripts/clean_html.sh
+      timeout: 60
+      runas: root
     - location: scripts/install_dependencies.sh
       timeout: 300
       runas: root
