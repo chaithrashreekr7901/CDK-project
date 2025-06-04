@@ -1955,7 +1955,7 @@ def get_deployment_configurations() -> dict:
                     "github_connection_arn": "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1", # REPLACE
                     "github_repo_owner": "chaithrashreekr7901",
                     "github_repo_name": "CDK-project", # The repository containing your application code
-                    "github_branch_name": "feature/simple-app-deploy", # The branch to monitor for changes
+                    "github_branch_name": "my-feature-branch", # The branch to monitor for changes
                     # "github_build_spec_path": "buildspec.yml", # Optional: Path to buildspec file in repo, default is root
                     # "github_full_clone": False, # Optional: True for full history, False for shallow clone (faster)
                 },
@@ -1966,7 +1966,7 @@ def get_deployment_configurations() -> dict:
 	                "build_image": "aws/codebuild/standard:5.0", # A common build image
                     #"build_image": "ubuntu/aws-codebuild-builder:latest", # Or a specific CodeBuild managed image ARN
 		            "commands_build": ["echo 'No complex build steps for HTML, just copy artifacts.'"],
-		            "artifacts_paths": ["simple-webapp/**/*"], # Capture the entire simple-webapp folder as artifacts
+		            "artifacts_paths": ["webapp/**/*"], # Capture the entire simple-webapp folder as artifacts
 		
                    # "environment_variables": { # Optional: Env vars for CodeBuild
                       #  "SOME_VAR": {"value": "some-value", "type": "PLAINTEXT"},
@@ -1984,7 +1984,7 @@ def get_deployment_configurations() -> dict:
                     # --- CodeDeploy EC2 Specific ---
                     "codedeploy_application_name": "MySimpleWebApp", # Optional: Name for CodeDeploy Application
                     "codedeploy_deployment_group_name": "MySimpleWebAppDG", # Optional: Name for CodeDeploy Deployment Group
-                    "codedeploy_appspec_path": "simple-webapp/appspec.yml", # Path to appspec.yml in artifacts
+                    "codedeploy_appspec_path": "webapp/appspec.yml", # Path to appspec.yml in artifacts
                     "create_codedeploy_service_role": False, # <-- NEW FLAG: Set to True to create a new role
                     "codedeploy_service_role_ref_id": "CodeDeployServiceRole",
                     # "codedeploy_service_role_arn": "arn:aws:iam::198484116691:role/service-role/aws-codedeploy-service-role", # REPLACE: Ensure this role exists or is created by your infra stack
