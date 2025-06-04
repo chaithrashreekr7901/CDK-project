@@ -1,3 +1,4 @@
 #!/bin/bash
-sudo yum update -y
-sudo yum install -y httpd
+echo "Installing Apache..."
+yum update -y
+yum install -y httpd

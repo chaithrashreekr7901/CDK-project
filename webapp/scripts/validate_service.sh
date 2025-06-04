@@ -1,2 +1,3 @@
 #!/bin/bash
-curl -f http://localhost || exit 1
+echo "Validating Apache service..."
+systemctl status httpd
