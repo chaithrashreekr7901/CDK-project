@@ -1,9 +1,9 @@
 version: 0.0
 os: linux
 files:
-  - source: webapp/index.html
+  - source: index.html
     destination: /var/www/html/
-  - source: webapp/scripts/
+  - source: scripts/
     destination: /tmp/codedeploy/scripts/
 
 permissions:
@@ -15,18 +15,18 @@ permissions:
 
 hooks:
   ApplicationStop:
-    - location: webapp/scripts/stop_server.sh
+    - location: scripts/stop_server.sh
       timeout: 60
       runas: root
   BeforeInstall:
-    - location: webapp/scripts/install_dependencies.sh
+    - location: scripts/install_dependencies.sh
       timeout: 300
       runas: root
   ApplicationStart:
-    - location: webapp/scripts/start_server.sh
+    - location: scripts/start_server.sh
       timeout: 300
       runas: root
   ValidateService:
-    - location: webapp/scripts/validate_service.sh
+    - location: scripts/validate_service.sh
       timeout: 300
       runas: root

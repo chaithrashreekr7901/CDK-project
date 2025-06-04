@@ -1966,7 +1966,7 @@ def get_deployment_configurations() -> dict:
 	                "build_image": "aws/codebuild/standard:5.0", # A common build image
                     #"build_image": "ubuntu/aws-codebuild-builder:latest", # Or a specific CodeBuild managed image ARN
 		            "commands_build": ["echo 'No complex build steps for HTML, just copy artifacts.'"],
-		            "artifacts_paths": ["webapp/**/*"], # Capture the entire simple-webapp folder as artifacts
+		            "artifacts_paths": ["webapp/**"], # Capture the entire simple-webapp folder as artifacts
 		
                    # "environment_variables": { # Optional: Env vars for CodeBuild
                       #  "SOME_VAR": {"value": "some-value", "type": "PLAINTEXT"},
