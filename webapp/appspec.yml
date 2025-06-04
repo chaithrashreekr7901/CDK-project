@@ -1,22 +1,18 @@
 version: 0.0
 os: linux
 files:
-  - source: /index.html
-    destination: /var/www/html/ # Standard Apache/Nginx web root on Linux
-  - source: /scripts/start_server.sh
+  - source: index.html
+    destination: /var/www/html/
+  - source: scripts/
     destination: /tmp/codedeploy/scripts/
-  - source: /scripts/stop_server.sh
-    destination: /tmp/codedeploy/scripts/
-  - source: /scripts/install_dependencies.sh
-    destination: /tmp/codedeploy/scripts/
-  - source: /scripts/validate_service.sh
-    destination: /tmp/codedeploy/scripts/
+
 permissions:
   - object: /tmp/codedeploy/scripts/
     pattern: "**"
     owner: root
     group: root
-    mode: 755 # Make scripts executable
+    mode: 755
+
 hooks:
   ApplicationStop:
     - location: scripts/stop_server.sh
