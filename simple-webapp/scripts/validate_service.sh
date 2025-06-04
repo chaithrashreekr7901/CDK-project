@@ -6,8 +6,8 @@ echo "--- CodeDeploy: Running ValidateService hook (validate_service.sh) ---"
 echo "Waiting for application to become healthy on port 8080..."
 
 HEALTH_CHECK_URL="http://localhost:8080/healthz"
-MAX_RETRIES=10
-RETRY_INTERVAL=5 # seconds
+MAX_RETRIES=20 # Increased retries
+RETRY_INTERVAL=10 # Increased interval (total 200 seconds wait time)
 
 for i in $(seq 1 $MAX_RETRIES); do
   response=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_CHECK_URL)

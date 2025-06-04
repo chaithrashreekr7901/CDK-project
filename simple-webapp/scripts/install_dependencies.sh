@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/install_dependencies.sh
-# This script installs necessary dependencies (e.g., httpd)
+# This script installs necessary dependencies (e.g., httpd, curl)
 
 echo "--- CodeDeploy: Running BeforeInstall hook (install_dependencies.sh) ---"
 echo "Updating yum packages..."
@@ -10,10 +10,10 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
-echo "Installing httpd..."
-sudo yum install -y httpd
+echo "Installing httpd and curl..."
+sudo yum install -y httpd curl # Added curl here
 if [ $? -ne 0 ]; then
-  echo "Error: httpd installation failed." >&2
+  echo "Error: httpd or curl installation failed." >&2
   exit 1
 fi
 
