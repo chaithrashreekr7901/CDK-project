@@ -1,0 +1,45 @@
+# simple-webapp/appspec.yml
+version: 0.0
+os: linux
+files:
+  - source: /index.html # Source path in the CodeBuild artifact
+    destination: /var/www/html/
+    overwrite: true                   # <--- This line was added to allow overwriting
+  - source: /scripts/start_server.sh
+    destination: /tmp/codedeploy/scripts/
+  - source: /scripts/stop_server.sh
+    destination: /tmp/codedeploy/scripts/
+  - source: /scripts/install_dependencies.sh
+    destination: /tmp/codedeploy/scripts/
+  - source: /scripts/validate_service.sh
+    destination: /tmp/codedeploy/scripts/
+  - source: /scripts/clean_old_files.sh   # <--- Added your cleaning script
+    destination: /tmp/codedeploy/scripts/
+
+permissions:
+  - object: /tmp/codedeploy/scripts/
+    pattern: "**"
+    owner: root
+    group: root
+    mode: 755 # Make scripts executable
+
+hooks:
+  ApplicationStop:
+    - location: scripts/stop_server.sh
+      timeout: 60
+      runas: root
+  BeforeInstall:
+    - location: scripts/clean_old_files.sh          
+      timeout: 60
+      runas: root
+    - location: scripts/install_dependencies.sh
+      timeout: 300
+      runas: root
+  AfterInstall:
+    - location: scripts/start_server.sh
+      timeout: 300
+      runas: root
+  ValidateService:
+    - location: scripts/validate_service.sh
+      timeout: 300
+      runas: root
