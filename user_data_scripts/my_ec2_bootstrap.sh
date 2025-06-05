@@ -12,7 +12,7 @@ echo "<html><body><h1>Initial Manual Setup Complete!</h1></body></html>" | sudo 
 sudo sed -i 's/Listen 80/Listen 8080/' /etc/httpd/conf/httpd.conf 
 sudo systemctl restart httpd
 echo "Installing CodeDeploy agent dependencies..."
-sudo dnf install -y ruby wget
+sudo dnf install -y ruby wget 
 if [ $? -ne 0 ]; then
     echo "Error: Failed to install ruby or wget." >&2
     exit 1

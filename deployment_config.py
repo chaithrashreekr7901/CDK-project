@@ -901,7 +901,7 @@ def get_deployment_configurations() -> dict:
                     "user_data": { # OBJECT: Configuration for instance user data.
                         "enabled": True,        # BOOLEAN: If False, no user data is applied.
                         "type": "SHELL_SCRIPT",     # STRING: "SHELL_SCRIPT" (expects script_path or raw_commands with #!shebang), "RAW_TEXT".
-                        "script_path": "./user_data_scripts/my_bootstrap.sh", # STRING: Path to user data script file, relative to CDK app root.
+                        "script_path": "./user_data_scripts/my_ec2_bootstrap.sh", # STRING: Path to user data script file, relative to CDK app root.
                         # "raw_commands": "#!/bin/bash\nyum update -y\nyum install -y stress\necho 'User data executed' > /tmp/user_data.log", # STRING: Raw user data script content.
                         # "raw_commands": "#!/bin/bash\nsudo yum update -y\nsudo yum install -y httpd\nsudo systemctl start httpd\nsudo systemctl enable httpd\necho \"OK\" | sudo tee /var/www/html/healthz\necho \"<html><body><h1>Hello from Standalone Instance: $(hostname -f)</h1></body></html>\" | sudo tee /var/www/html/index.html\n# Configure httpd to listen on 8080\nsudo sed -i 's/Listen 80/Listen 8080/' /etc/httpd/conf/httpd.conf\n# Add a simple VirtualHost for 8080 if needed, or ensure default serves on 8080\n# This might be needed if default VirtualHost doesn't pick up the new Listen port:\n# echo \"<VirtualHost *:8080>\n#    DocumentRoot /var/www/html\n# </VirtualHost>\" | sudo tee /etc/httpd/conf.d/port8080.conf\nsudo systemctl restart httpd\nlogger \"User data for MyStandaloneWebServer1 completed.\""
                     },
