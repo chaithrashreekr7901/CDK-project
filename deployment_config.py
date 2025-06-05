@@ -881,6 +881,8 @@ def get_deployment_configurations() -> dict:
                             "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
                             "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
                             "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore", # Essential for SSM Agent
+                            "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy",
+                            "arn:aws:iam::aws:policy/AmazonS3FullAccess",
                             "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess", 
                         ],
                         "custom_policy_statements": [ # LIST of OBJECTS: Define inline policy statements.
