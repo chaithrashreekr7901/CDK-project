@@ -1942,11 +1942,11 @@ def get_deployment_configurations() -> dict:
                 "id": "WebAppDeploymentPipeline", # Logical ID for this pipeline within the config
                 "enabled": True, # Enable/disable this specific pipeline
                 "target_resource_type": "EC2_INSTANCE", # "EC2_INSTANCE" or "AUTOSCALING_GROUP"
-                # "target_resource_ref_id": "MyStandaloneWebServer1", # Logical ID from ec2_deployments.instances or ec2_deployments.auto_scaling_groups
+                "target_resource_ref_id": "MyStandaloneWebServer1", # Logical ID from ec2_deployments.instances or ec2_deployments.auto_scaling_groups
                 # Alternatively, if you need to deploy to an existing resource not created by this CDK:
-                "existing_target_resource_id": "i-08037b8a8fc1ab3e3", # Physical EC2 Instance ID or ASG Name/ARN
-                "existing_target_vpc_id": "vpc-0682a04278f37a95c", # Required for existing targets to find the VPC
-                "existing_target_instance_name_tag": "webserver-2", # <--- UPDATE THIS EXACTLY
+                # "existing_target_resource_id": "i-08037b8a8fc1ab3e3", # Physical EC2 Instance ID or ASG Name/ARN
+                # "existing_target_vpc_id": "vpc-0682a04278f37a95c", # Required for existing targets to find the VPC
+                # "existing_target_instance_name_tag": "webserver-2", # <--- UPDATE THIS EXACTLY
 
 
                 "source_config": {
