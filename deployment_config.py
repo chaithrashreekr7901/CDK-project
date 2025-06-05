@@ -674,7 +674,7 @@ def get_deployment_configurations() -> dict:
         },
         {
                 "id": "AlbSG",
-                "enabled": True,
+                "enabled": False,
                 "config": {
                     "security_group_name": "my-webapp-alb-sg",
                     "description": "Security group for MyWebAppALB",
@@ -724,7 +724,7 @@ def get_deployment_configurations() -> dict:
             },
             {
                 "id": "AsgInstanceSG",
-                "enabled": True,
+                "enabled": False,
                 "config": {
                     "security_group_name": "my-asg-instance-sg",
                     "description": "Security group for ASG web instances",
