@@ -37,7 +37,7 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
     def __init__(self, scope: Construct, id: str, *,
                  pipeline_config: dict,
                  created_vpcs_map: typing.Dict[str, ec2.IVpc],
-                 created_ec2_instances_map: typing.Dict[str, ec2.Instance], # This map contains L2 ec2.Instance objects
+                 created_ec2_instances_map: typing.Dict[str, typing.Any], # Type hint changed to Any as it holds Ec2InstanceNestedStack objects
                  created_asgs_map: typing.Dict[str, autoscaling.AutoScalingGroup],
                  created_iam_roles_map: typing.Dict[str, str], # Expects ARNs (strings)
                  description: typing.Optional[str] = None,
@@ -227,13 +227,13 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                 )
 
                 if target_resource_type == "EC2_INSTANCE":
-                    target_instance_id: str = ""
-                    instance_name_tag_val: str = ""
+                    target_instance_id_str: str = "" # This will hold the instance ID as a string
+                    instance_name_tag_val: str = "" # Initialize for use in tags
 
                     existing_instance_id = pipeline_config.get("existing_target_resource_id")
                     
                     if existing_instance_id:
-                        target_instance_id = existing_instance_id
+                        target_instance_id_str = existing_instance_id
                         instance_name_tag_val = pipeline_config.get("existing_target_instance_name_tag", existing_instance_id)
                         logger.info(f"Pipeline '{pipeline_id}': Using existing EC2 instance '{existing_instance_id}' with assumed Name tag '{instance_name_tag_val}' as target.")
                     else:
@@ -247,29 +247,29 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                             logger.error(f"Pipeline '{pipeline_id}': EC2 instance '{instance_ref_id}' not found in created resources.")
                             raise ValueError(f"EC2 instance target '{instance_ref_id}' not resolved from created resources for pipeline '{pipeline_id}'")
                         
-                        target_instance_id = created_instance_obj.instance_id # Get the actual instance ID from the L2 object
+                        # Corrected: Access 'instance_id_token' from the Ec2InstanceNestedStack object
+                        if hasattr(created_instance_obj, 'instance_id_token') and created_instance_obj.instance_id_token:
+                            target_instance_id_str = created_instance_obj.instance_id_token
+                        else:
+                            logger.error(f"Pipeline '{pipeline_id}': Ec2InstanceNestedStack object for '{instance_ref_id}' does not have 'instance_id_token'.")
+                            raise ValueError(f"Instance ID token not found for created EC2 instance '{instance_ref_id}'")
+
                         if hasattr(created_instance_obj, 'public_instance_name_tag_value') and created_instance_obj.public_instance_name_tag_value:
                             instance_name_tag_val = created_instance_obj.public_instance_name_tag_value
                         else:
                             instance_name_tag_val = instance_ref_id
                             logger.warning(f"Pipeline '{pipeline_id}': Could not determine actual Name tag for created instance '{instance_ref_id}'. Using '{instance_ref_id}' as Name tag value for CodeDeploy.")
 
-                        logger.info(f"Pipeline '{pipeline_id}': Using created EC2 instance '{instance_ref_id}' (ID: {target_instance_id}) with Name tag '{instance_name_tag_val}' as target.")
+                        logger.info(f"Pipeline '{pipeline_id}': Using created EC2 instance '{instance_ref_id}' (ID: {target_instance_id_str}) with Name tag '{instance_name_tag_val}' as target.")
 
-                    if not target_instance_id:
+                    if not target_instance_id_str:
                         logger.error(f"Pipeline '{pipeline_id}': EC2 instance target ID could not be resolved for CodeDeploy.")
                         raise ValueError(f"EC2 instance target ID not resolved for pipeline '{pipeline_id}'")
 
-                    # Use the instance ID directly in InstanceTagSet for CodeDeploy
-                    # CodeDeploy can target instances by their ID or tags.
-                    # When using ec2_instance_tags, it's typically based on the 'Name' tag.
-                    # If you want to target by ID, you'd use instance_ids property on ServerDeploymentGroup
-                    # For consistency with Name tag approach:
                     dg = codedeploy.ServerDeploymentGroup(
                         self, f"{pipeline_id}CodeDeployDG",
                         deployment_group_name=deploy_config.get("codedeploy_deployment_group_name", f"{pipeline_id}-DG"),
                         application=app,
-                        # Pass the instance ID as a tag value if that's how it's tagged, or the explicit Name tag
                         ec2_instance_tags=codedeploy.InstanceTagSet({"Name": [instance_name_tag_val]}),
                         deployment_config=resolved_deployment_config,
                         install_agent=deploy_config.get("codedeploy_install_agent", False)
@@ -325,7 +325,7 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
             elif deploy_config["deployment_strategy"] == "SSM_RUN_COMMAND":
                 if target_resource_type == "EC2_INSTANCE":
                     instance_ref_id = pipeline_config.get("target_resource_ref_id")
-                    target_instance = created_ec2_instances_map.get(instance_ref_id)
+                    target_instance_obj = created_ec2_instances_map.get(instance_ref_id) # Get the object
                     target_ids = []
 
                     existing_instance_id = pipeline_config.get("existing_target_resource_id")
@@ -333,9 +333,9 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                     if existing_instance_id:
                         target_ids = [existing_instance_id]
                         logger.info(f"Pipeline '{pipeline_id}': Using existing EC2 instance '{existing_instance_id}' for SSM Run Command.")
-                    elif target_instance:
-                        target_ids = [target_instance.instance_id]
-                        logger.info(f"Pipeline '{pipeline_id}': Using created EC2 instance '{instance_ref_id}' for SSM Run Command.")
+                    elif target_instance_obj and hasattr(target_instance_obj, 'instance_id_token') and target_instance_obj.instance_id_token:
+                        target_ids = [target_instance_obj.instance_id_token] # Correctly access the token
+                        logger.info(f"Pipeline '{pipeline_id}': Using created EC2 instance '{instance_ref_id}' (ID: {target_instance_obj.instance_id_token}) for SSM Run Command.")
                     else:
                         logger.error(f"Pipeline '{pipeline_id}': EC2 instance target not resolved for SSM Run Command.")
                         raise ValueError(f"EC2 instance target not resolved for SSM Run Command for pipeline '{pipeline_id}'")
