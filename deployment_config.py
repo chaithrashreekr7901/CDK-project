@@ -812,7 +812,7 @@ def get_deployment_configurations() -> dict:
                         "enabled": False,
                         "name": "web-app-01-sg", # Optional: Physical name for the SG
                         "description": "Security group for MyWebAppServer EC2 instance",
-                        "allow_all_outbound": True, # Default is True, can be set to False
+                        "allow_all_outbound": False, # Default is True, can be set to False
                         "ingress_rules": [
                             {
                                 "description": "Allow SSH from My IP",
