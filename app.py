@@ -52,7 +52,7 @@ MainOrchestratorStack(app, main_stack_name,
 GITHUB_CONNECTION_ARN = "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1"
 GITHUB_REPO_OWNER = "chaithrashreekr7901"
 GITHUB_REPO_NAME = "CDK-project"
-GITHUB_BRANCH = "CRMP-cdk"
+GITHUB_BRANCH = "my-feature-branch"
 
 pipeline_stack_name = "MyCDKApplicationPipelineStack"
 PipelineStack(app, pipeline_stack_name,
