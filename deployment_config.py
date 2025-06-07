@@ -1966,7 +1966,7 @@ def get_deployment_configurations() -> dict:
                     "github_connection_arn": "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1", # REPLACE
                     "github_repo_owner": "chaithrashreekr7901",
                     "github_repo_name": "CDK-project", # The repository containing your application code
-                    "github_branch_name": "my-feature-branch", # The branch to monitor for changes
+                    "github_branch_name": "cdk-project-updated", # The branch to monitor for changes
                     # "github_build_spec_path": "buildspec.yml", # Optional: Path to buildspec file in repo, default is root
                     # "github_full_clone": False, # Optional: True for full history, False for shallow clone (faster)
                 },
