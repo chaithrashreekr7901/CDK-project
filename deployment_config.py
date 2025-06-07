@@ -685,7 +685,14 @@ def get_deployment_configurations() -> dict:
                             "peer_type": "ANY_IPV4",
                             "protocol": "tcp",
                             "port": 443
-                        }
+                        },
+                        {
+                            "description": "Allow HTTP from MyWebAppALB",
+                            "peer_type": "ANY_IPV4",  # <-- FIX 1: Use the correct reference type
+                            # "peer_value": "MyWebAppALB",          # <-- FIX 2: Use the 'peer_value' key
+                            "protocol": "tcp",
+                            "port": 8080
+                        },
                     ],
                     "tags": {"Role": "LoadBalancer"}
                 }
