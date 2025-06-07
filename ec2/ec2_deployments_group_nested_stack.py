@@ -19,7 +19,7 @@ from .application_load_balancer_stack import ApplicationLoadBalancerStack
 from .network_load_balancer_stack import NetworkLoadBalancerStack
 from .target_group_stack import TargetGroupStack
 from .auto_scaling_group_stack import AutoScalingGroupStack
-from .security_group_stack import SecurityGroupStack, construct_id_to_cdk_id_part # Import SecurityGroupStack and helper
+from .security_group_stack import SecurityGroupStack, construct_id_to_cdk_id_part
 
 def merge_dicts(base, overlay):
     result = copy.deepcopy(base)
@@ -35,32 +35,26 @@ def merge_dicts(base, overlay):
 logger = logging.getLogger(__name__)
 
 class Ec2DeploymentsGroupNestedStack(NestedStack):
-    # These type hints are for clarity but don't define the constructor behavior
     created_ec2_instances_map: typing.Dict[str, ec2.Instance]
     created_asgs_map: typing.Dict[str, autoscaling.AutoScalingGroup]
-    created_iam_roles_map: typing.Dict[str, iam.IRole] # Add this type hint
+    created_iam_roles_map: typing.Dict[str, iam.IRole]
 
     def __init__(self, scope: Construct, id: str, *,
                  ec2_deployments_config: typing.Dict,
                  created_vpcs_map: typing.Dict[str, ec2.IVpc],
-                 # ADDED: Explicitly declare the maps passed from the parent stack
                  created_ec2_instances_map: typing.Dict[str, ec2.Instance],
                  created_asgs_map: typing.Dict[str, autoscaling.AutoScalingGroup],
                  created_iam_roles_map: typing.Dict[str, iam.IRole],
                  description: typing.Optional[str] = None,
                  **kwargs) -> None:
 
-        # Filter kwargs to only pass what NestedStack's __init__ expects.
-        # 'description' is explicitly handled. Other common ones are 'env', 'stack_name', etc.
-        # Assuming 'kwargs' might contain 'env' or 'stack_name' if passed from app.py/MainOrchestratorStack.
         nested_stack_valid_kwargs = {}
         for key, value in kwargs.items():
-            if key in ['env', 'stack_name', 'synthesizer', 'termination_protection']: # Add other valid NestedStack kwargs if used
+            if key in ['env', 'stack_name', 'synthesizer', 'termination_protection']:
                 nested_stack_valid_kwargs[key] = value
 
         super().__init__(scope, id, description=description, **nested_stack_valid_kwargs)
 
-        # Store the received maps as instance attributes for use within this stack
         self.created_vpcs_map = created_vpcs_map
         self.created_ec2_instances_map = created_ec2_instances_map
         self.created_asgs_map = created_asgs_map
@@ -84,8 +78,8 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
         global_defaults = {
             k: v for k, v in defaults_config.items()
             if k not in ["instance_defaults", "launch_template_defaults",
-                          "ebs_volume_defaults", "alb_defaults", "nlb_defaults",
-                          "target_group_defaults", "asg_defaults", "security_group_defaults"]
+                         "ebs_volume_defaults", "alb_defaults", "nlb_defaults",
+                         "target_group_defaults", "asg_defaults", "security_group_defaults"]
         }
         instance_specific_defaults = defaults_config.get("instance_defaults", {})
         lt_specific_defaults = defaults_config.get("launch_template_defaults", {})
@@ -96,17 +90,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
         asg_specific_defaults = defaults_config.get("asg_defaults", {})
         sg_specific_defaults = defaults_config.get("security_group_defaults", {})
 
-        # --- Revised Processing Order ---
-        # 1. Custom Security Groups
-        # 2. EC2 Instances (standalone)
-        # 3. Launch Templates
-        # 4. Application Load Balancers (can now reference instance IDs and custom SGs)
-        # 5. Network Load Balancers
-        # 6. Standalone Target Groups (can reference instance IDs)
-        # 7. Auto Scaling Groups
-        # 8. EBS Volumes
-
-        # --- 1. Process Custom Security Group Deployments ---
+        # --- Process Custom Security Group Deployments ---
         sg_configurations_list = ec2_deployments_config.get("security_groups", [])
         if not sg_configurations_list:
             logger.info(f"{id}: No custom Security Group configurations found.")
@@ -154,18 +138,18 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                         self, sg_nested_stack_id,
                         sg_config_entry=sg_cfg_entry,
                         vpc=vpc_obj_for_sg,
-                        peer_sgs_map=self.resolved_sgs_map, # Pass current map (might be empty or have other LBs SGs if order changes)
+                        peer_sgs_map=self.resolved_sgs_map,
                         description=f"Nested Stack for Security Group: {sg_name_for_desc}"
                     )
                     if sg_stack.security_group:
                         self.deployed_security_group_stacks[sg_id_val] = sg_stack
-                        self.resolved_sgs_map[sg_id_val] = sg_stack.security_group # Add newly created SG to the map
+                        self.resolved_sgs_map[sg_id_val] = sg_stack.security_group
                         Tags.of(sg_stack).add("ResourceType", "SecurityGroup")
                         Tags.of(sg_stack).add("ConfigID", sg_id_val)
                 except Exception as e:
                     logger.error(f"FAILED to instantiate SecurityGroupStack '{sg_nested_stack_id}': {e}", exc_info=True)
 
-        # --- 2. Process Direct EC2 Instance Deployments ---
+        # --- Process Direct EC2 Instance Deployments ---
         instance_configurations_list = ec2_deployments_config.get("instances", [])
         if not instance_configurations_list:
             logger.info(f"{id}: No direct EC2 instance configurations found.")
@@ -186,8 +170,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                 if not config_id_base:
                     logger.error(f"Skipping EC2 instance at index {i} due to missing 'id'.")
                     continue
-
-                # Ensure 'config' and 'network_config' exist for modification
+                
                 if "config" not in ec2_cfg_entry: ec2_cfg_entry["config"] = {}
                 if "network_config" not in ec2_cfg_entry["config"]: ec2_cfg_entry["config"]["network_config"] = {}
 
@@ -201,7 +184,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                             resolved_sg_ids_for_instance.append(self.resolved_sgs_map[ref_id].security_group_id)
                         else:
                             logger.warning(f"Instance '{config_id_base}': Could not resolve SG ref_id '{ref_id}'. Assuming it's a physical ID or defined in instance's own SG def.")
-                            resolved_sg_ids_for_instance.append(ref_id) # Keep original if not found
+                            resolved_sg_ids_for_instance.append(ref_id)
 
                     network_config_block["security_group_ids"] = resolved_sg_ids_for_instance
                     network_config_block.pop("security_group_refs", None)
@@ -230,7 +213,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                         iam_conf["profile_name"] = f"{orig_prof}{suffix}"
 
                     if merged_ec2_specific_config.get("security_group_definition", {}).get("enabled", False) and \
-                        not merged_ec2_specific_config.get("network_config", {}).get("security_group_ids"):
+                       not merged_ec2_specific_config.get("network_config", {}).get("security_group_ids"):
                         sg_def = merged_ec2_specific_config.setdefault("security_group_definition", {})
                         orig_sg_name = sg_def.get("name", f"{original_instance_name}-sg")
                         sg_def["name"] = f"{orig_sg_name}{suffix}"
@@ -245,7 +228,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                             self, nested_stack_id,
                             ec2_specific_config=merged_ec2_specific_config
                         )
-                        storage_key = f"{config_id_base}{suffix}" # Use this key to store the stack
+                        storage_key = f"{config_id_base}{suffix}"
                         self.deployed_instance_stacks[storage_key] = ec2_inst_stack
                         Tags.of(ec2_inst_stack).add("Ec2ResourceType", "Instance")
                         Tags.of(ec2_inst_stack).add("ConfigID", config_id_base)
@@ -253,7 +236,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                     except Exception as e:
                         logger.error(f"FAILED to instantiate Ec2InstanceNestedStack '{nested_stack_id}': {e}", exc_info=True)
 
-        # --- 3. Process EC2 Launch Template Deployments ---
+        # --- Process EC2 Launch Template Deployments ---
         lt_configurations_list = ec2_deployments_config.get("launch_templates", [])
         if not lt_configurations_list:
             logger.info(f"{id}: No Launch Template configurations found.")
@@ -283,7 +266,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
 
                 vpc_for_lt: typing.Optional[ec2.IVpc] = None
                 lt_vpc_id_from_config = merged_lt_full_entry.get("config", {}).get("vpc_id") or \
-                                         merged_lt_full_entry.get("vpc_id")
+                                        merged_lt_full_entry.get("vpc_id")
                 if not lt_vpc_id_from_config:
                     for asg_c in ec2_deployments_config.get("auto_scaling_groups", []):
                         if asg_c.get("config",{}).get("launch_template",{}).get("launch_template_ref_id") == lt_config_id:
@@ -337,6 +320,8 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                         self, lt_nested_stack_id,
                         lt_config=merged_lt_full_entry,
                         vpc=vpc_for_lt,
+                        # *** THIS IS THE FIX FOR THE IAM ROLE ERROR ***
+                        created_iam_roles_map=self.created_iam_roles_map,
                         description=f"Nested Stack for EC2 Launch Template: {lt_name_for_desc}"
                     )
                     self.deployed_lt_stacks[lt_config_id] = lt_stack
@@ -345,8 +330,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                 except Exception as e:
                     logger.error(f"FAILED to instantiate LaunchTemplateStack '{lt_nested_stack_id}': {e}", exc_info=True)
 
-        # --- 4. Process Application Load Balancers (ALBs) ---
-        # ALB stacks are instantiated here, after Instances and SGs, so they can resolve references.
+        # --- Process Application Load Balancers (ALBs) ---
         alb_configurations_list = ec2_deployments_config.get("application_load_balancers", [])
         if not alb_configurations_list:
             logger.info(f"{id}: No Application Load Balancer configurations found.")
@@ -370,7 +354,6 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                 temp_alb_config_block = merge_dicts(global_defaults, alb_specific_defaults)
                 merged_alb_config_block = merge_dicts(temp_alb_config_block, alb_cfg_entry["config"])
 
-                # Resolve security_group_refs for the ALB itself
                 sg_refs_for_alb = merged_alb_config_block.get("security_group_refs")
                 if sg_refs_for_alb and isinstance(sg_refs_for_alb, list):
                     resolved_sg_ids_for_alb = []
@@ -380,11 +363,10 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                         else:
                             logger.warning(f"ALB '{alb_id_val}': Could not resolve SG ref_id '{ref_id}'. Assuming it's a physical ID.")
                             resolved_sg_ids_for_alb.append(ref_id)
-                    merged_alb_config_block["security_group_ids"] = resolved_sg_ids_for_alb # Set physical IDs
+                    merged_alb_config_block["security_group_ids"] = resolved_sg_ids_for_alb
                     merged_alb_config_block.pop("security_group_refs", None)
                     logger.info(f"ALB '{alb_id_val}': Updated config with resolved security_group_ids: {resolved_sg_ids_for_alb}")
 
-                # Resolve instance_id_refs within target_groups for this ALB's config
                 if "target_groups" in merged_alb_config_block:
                     for tg_def in merged_alb_config_block.get("target_groups", []):
                         if "config" in tg_def and "targets" in tg_def["config"]:
@@ -402,7 +384,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                                     else:
                                         logger.warning(f"ALB '{alb_id_val}', TG '{tg_def.get('id')}': Could not resolve target instance_id_ref '{instance_ref_id}'. Instance stack not found.")
 
-                alb_cfg_entry["config"] = merged_alb_config_block # Update the entry with resolved targets & SGs
+                alb_cfg_entry["config"] = merged_alb_config_block
 
                 alb_name_for_desc = merged_alb_config_block.get("load_balancer_name", alb_id_val)
                 sanitized_alb_id = ''.join(filter(str.isalnum, alb_id_val)) or f"ALBDef{i}"
@@ -415,9 +397,8 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                         description=f"Nested Stack for Application Load Balancer: {alb_name_for_desc}"
                     )
                     self.deployed_alb_stacks[alb_id_val] = alb_stack
-                    # Store ALB's primary security group in the resolved_sgs_map if it was created by the ALB stack
                     if alb_stack.alb and hasattr(alb_stack.alb, 'connections') and alb_stack.alb.connections.security_groups and \
-                       not merged_alb_config_block.get("security_group_ids") and not merged_alb_config_block.get("security_group_refs"): # Only if SG was created by ALB stack
+                       not merged_alb_config_block.get("security_group_ids") and not merged_alb_config_block.get("security_group_refs"):
                         alb_primary_sg = alb_stack.alb.connections.security_groups[0]
                         self.resolved_sgs_map[alb_id_val] = alb_primary_sg
                         logger.info(f"Stored ALB '{alb_id_val}' (self-created) security group '{alb_primary_sg.security_group_id}' in resolved_sgs_map.")
@@ -427,14 +408,11 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                 except Exception as e:
                     logger.error(f"FAILED to instantiate ApplicationLoadBalancerStack '{alb_nested_stack_id}': {e}", exc_info=True)
 
-
-        # --- 5. Process Network Load Balancers ---
-        # (Similar logic for NLBs if they need to reference SGs or instances)
+        # --- Process Network Load Balancers ---
         nlb_configurations_list = ec2_deployments_config.get("network_load_balancers", [])
         if not nlb_configurations_list:
             logger.info(f"{id}: No Network Load Balancer configurations found.")
         else:
-            # ... (NLB processing logic, including resolving any instance_id_refs for its TGs) ...
             logger.info(f"{id}: Processing {len(nlb_configurations_list)} Network Load Balancer definition(s).")
             for i, nlb_cfg_entry_original in enumerate(nlb_configurations_list):
                 if not isinstance(nlb_cfg_entry_original, dict):
@@ -453,7 +431,6 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                 temp_nlb_config_block = merge_dicts(global_defaults, nlb_specific_defaults)
                 merged_nlb_config_block = merge_dicts(temp_nlb_config_block, nlb_cfg_entry["config"])
 
-                # Resolve instance_id_refs for target groups within this NLB's config
                 if "target_groups" in merged_nlb_config_block:
                     for tg_def in merged_nlb_config_block.get("target_groups", []):
                         if "config" in tg_def and "targets" in tg_def["config"]:
@@ -488,14 +465,13 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                 except Exception as e:
                     logger.error(f"FAILED to instantiate NetworkLoadBalancerStack '{nlb_nested_stack_id}': {e}", exc_info=True)
 
-        # --- 6. Process Standalone Target Group Deployments ---
+        # --- Process Standalone Target Group Deployments ---
         target_group_configurations_list = ec2_deployments_config.get("target_groups", [])
         if not target_group_configurations_list:
             logger.info(f"{id}: No standalone Target Group configurations found.")
         else:
             logger.info(f"{id}: Processing {len(target_group_configurations_list)} standalone Target Group definition(s).")
             for i, tg_cfg_entry_original in enumerate(target_group_configurations_list):
-                # ... (Full TG processing logic, including resolving instance_id_ref from self.deployed_instance_stacks) ...
                 if not isinstance(tg_cfg_entry_original, dict):
                     logger.error(f"Skipping invalid Target Group config entry at index {i}: not a dictionary.")
                     continue
@@ -545,15 +521,13 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                     logger.error(f"FAILED to instantiate TargetGroupStack '{tg_nested_stack_id}': {e}", exc_info=True)
 
 
-        # --- 7. Process Auto Scaling Group Deployments ---
+        # --- Process Auto Scaling Group Deployments ---
         asg_configurations_list = ec2_deployments_config.get("auto_scaling_groups", [])
         if not asg_configurations_list:
             logger.info(f"{id}: No Auto Scaling Group configurations found.")
         else:
             logger.info(f"{id}: Processing {len(asg_configurations_list)} Auto Scaling Group definition(s).")
             for i, asg_cfg_entry_original in enumerate(asg_configurations_list):
-                # ... (Full ASG processing logic, ensuring it uses resolved_sgs_map, deployed_lt_stacks,
-                #       deployed_alb_stacks, deployed_target_group_stacks for lookups) ...
                 if not isinstance(asg_cfg_entry_original, dict):
                     logger.error(f"Skipping invalid ASG config entry at index {i}: not a dictionary.")
                     continue
@@ -605,10 +579,10 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                                 actual_ni_list_for_asg_sg_check = lt_network_interfaces_cfg_val
                             sg_id_from_lt_data_for_asg = None
                             if actual_ni_list_for_asg_sg_check and \
-                                isinstance(actual_ni_list_for_asg_sg_check[0], dict) and \
-                                actual_ni_list_for_asg_sg_check[0].get("groups") and \
-                                isinstance(actual_ni_list_for_asg_sg_check[0]["groups"], list) and \
-                                actual_ni_list_for_asg_sg_check[0]["groups"]:
+                               isinstance(actual_ni_list_for_asg_sg_check[0], dict) and \
+                               actual_ni_list_for_asg_sg_check[0].get("groups") and \
+                               isinstance(actual_ni_list_for_asg_sg_check[0]["groups"], list) and \
+                               actual_ni_list_for_asg_sg_check[0]["groups"]:
                                 sg_id_from_lt_data_for_asg = actual_ni_list_for_asg_sg_check[0]["groups"][0]
                             if sg_id_from_lt_data_for_asg:
                                 found_sg_obj_for_asg = None
@@ -616,7 +590,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                                     if hasattr(sg_obj_in_map, 'security_group_id') and sg_obj_in_map.security_group_id == sg_id_from_lt_data_for_asg:
                                         found_sg_obj_for_asg = sg_obj_in_map
                                         break
-                                    elif logical_id_map == sg_id_from_lt_data_for_asg: # If sg_id_from_lt_data was a logical ref
+                                    elif logical_id_map == sg_id_from_lt_data_for_asg:
                                         found_sg_obj_for_asg = sg_obj_in_map
                                         break
                                 if found_sg_obj_for_asg:
@@ -704,7 +678,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                 except Exception as e:
                     logger.error(f"FAILED to instantiate AutoScalingGroupStack '{asg_nested_stack_id}': {e}", exc_info=True)
 
-        # --- 7. Process EBS Volume Deployments ---
+        # --- Process EBS Volume Deployments ---
         ebs_configurations_list = ec2_deployments_config.get("ebs_volumes", [])
         if not ebs_configurations_list:
             logger.info(f"{id}: No EBS Volume configurations found (final pass).")

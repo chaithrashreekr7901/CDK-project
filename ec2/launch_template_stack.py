@@ -12,6 +12,7 @@ from aws_cdk import (
     Aws,
     Fn,
     aws_ec2 as ec2,
+    aws_iam as iam  # <-- Import iam module
 )
 from constructs import Construct
 
@@ -37,11 +38,16 @@ class LaunchTemplateStack(NestedStack):
     def __init__(self, scope: Construct, construct_id: str,
                  lt_config: dict, 
                  vpc: typing.Optional[ec2.IVpc] = None, 
+                 # Accept the map of created IAM roles
+                 created_iam_roles_map: typing.Optional[typing.Dict[str, iam.IRole]] = None,
                  **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         self.config = lt_config
-        self.vpc = vpc 
+        self.vpc = vpc
+        # Store the roles map as an instance attribute
+        self.created_iam_roles_map = created_iam_roles_map or {}
+        
         launch_template_name = self.config.get("launch_template_name")
         if not launch_template_name:
             raise ValueError(f"Launch Template config for '{construct_id}' must have 'launch_template_name'.")
@@ -76,7 +82,6 @@ class LaunchTemplateStack(NestedStack):
             template_data_config.get("ami_config"),
             template_data_config.get("image_id")
         )
-        # Pass the entire "user_data" block from config to _resolve_user_data
         user_data_b64_str = self._resolve_user_data(template_data_config.get("user_data"))
 
         iam_instance_profile_payload = self._parse_iam_instance_profile(template_data_config.get("iam_instance_profile", {}))
@@ -122,7 +127,7 @@ class LaunchTemplateStack(NestedStack):
         if parsed_network_interfaces_cfn and "security_group_ids" in template_data_config:
             logger.info(f"LT '{launch_template_name}': 'security_group_ids' at top level of template_data ignored because 'network_interfaces' are defined.")
         elif not parsed_network_interfaces_cfn and template_data_config.get("security_group_ids"):
-             lt_data_args["security_group_ids"] = template_data_config.get("security_group_ids")
+            lt_data_args["security_group_ids"] = template_data_config.get("security_group_ids")
 
         final_lt_data_props = {k: v for k, v in lt_data_args.items() if v is not None}
         launch_template_data_object = ec2.CfnLaunchTemplate.LaunchTemplateDataProperty(**final_lt_data_props) if final_lt_data_props else ec2.CfnLaunchTemplate.LaunchTemplateDataProperty()
@@ -185,8 +190,8 @@ class LaunchTemplateStack(NestedStack):
             default_sg_id_construct = f"{sanitized_lt_name_for_sg_id}DefSg"
             
             self.managed_security_group = ec2.SecurityGroup(self, default_sg_id_construct,
-                                         vpc=self.vpc, 
-                                         description=f"Default SG for LT {lt_name}")
+                                                         vpc=self.vpc, 
+                                                         description=f"Default SG for LT {lt_name}")
             Tags.of(self.managed_security_group).add("Name", f"{lt_name}-default-lt-sg")
             determined_sg_ids.append(self.managed_security_group.security_group_id)
             return [
@@ -251,8 +256,8 @@ class LaunchTemplateStack(NestedStack):
             sanitized_lt_name_for_sg_id_ensured = ''.join(filter(str.isalnum, lt_name))[:20]
             default_sg_ensured_id_construct = f"{sanitized_lt_name_for_sg_id_ensured}EnsuredSg"
             self.managed_security_group = ec2.SecurityGroup(self, default_sg_ensured_id_construct,
-                                         vpc=self.vpc,
-                                         description=f"Ensured SG for LT {lt_name}")
+                                                         vpc=self.vpc,
+                                                         description=f"Ensured SG for LT {lt_name}")
             Tags.of(self.managed_security_group).add("Name", f"{lt_name}-ensured-lt-sg")
             determined_sg_ids = [self.managed_security_group.security_group_id] 
             cfn_interfaces = [ec2.CfnLaunchTemplate.NetworkInterfaceProperty(device_index=0, groups=determined_sg_ids, delete_on_termination=True)]
@@ -267,7 +272,7 @@ class LaunchTemplateStack(NestedStack):
                 )
                 logger.info(f"LT {lt_name}: Set self.managed_security_group by importing SG ID {unique_determined_sg_ids[0]} from config.")
             except Exception as e:
-                 logger.warning(f"Could not import SG '{unique_determined_sg_ids[0]}' for LT wrapper's managed_security_group attribute: {e}")
+                logger.warning(f"Could not import SG '{unique_determined_sg_ids[0]}' for LT wrapper's managed_security_group attribute: {e}")
 
         return cfn_interfaces if cfn_interfaces else None, unique_determined_sg_ids
 
@@ -313,24 +318,23 @@ class LaunchTemplateStack(NestedStack):
         logger.warning(f"Could not resolve AMI from config: {ami_config}"); return None
 
     def _resolve_user_data(self, user_data_config_block: typing.Optional[dict]) -> typing.Optional[str]:
-        # Expects user_data_config_block to be the dict under "user_data" key from template_data
         if not user_data_config_block or not isinstance(user_data_config_block, dict) or \
            not user_data_config_block.get("enabled", False):
             logger.info(f"User data is not enabled or not configured for LT '{self.config.get('launch_template_name')}'.")
             return None
         
         script_path_str = user_data_config_block.get("user_data_script_path")
-        user_data_code_str = user_data_config_block.get("user_data_code") # New option
+        user_data_code_str = user_data_config_block.get("user_data_code")
         b64_content = user_data_config_block.get("user_data_b64")
-        script_type = user_data_config_block.get("type", "SHELL_SCRIPT").upper() # Default to SHELL_SCRIPT
+        script_type = user_data_config_block.get("type", "SHELL_SCRIPT").upper()
 
         content_to_encode = None
 
         if script_path_str:
             script_file = Path(script_path_str)
             if not script_file.is_file(): 
-                 logger.error(f"UserData script_path not found or is not a file: {script_path_str}")
-                 return None
+                logger.error(f"UserData script_path not found or is not a file: {script_path_str}")
+                return None
             try:
                 logger.info(f"Reading user data from script path: {script_path_str}")
                 content_to_encode = script_file.read_text()
@@ -342,30 +346,65 @@ class LaunchTemplateStack(NestedStack):
             content_to_encode = user_data_code_str
         elif b64_content: 
             logger.info("Using pre-encoded user_data_b64 from config.")
-            return b64_content # Already encoded
+            return b64_content
         
         if content_to_encode:
-            # Add shebang if it's a shell script and doesn't have one
             if script_type == "SHELL_SCRIPT" and not content_to_encode.lstrip().startswith("#!"):
                 content_to_encode = "#!/bin/bash\n" + content_to_encode
-            # Add other script type handling here if necessary (e.g., PowerShell, cloud-boothook)
             return Fn.base64(content_to_encode)
         
         logger.info("No user data content provided in enabled user_data config.")
         return None
-
+        
     def _parse_iam_instance_profile(self, iam_conf: typing.Optional[dict]) -> typing.Optional[ec2.CfnLaunchTemplate.IamInstanceProfileProperty]:
-        if not iam_conf or not iam_conf.get("enabled", False): 
-            logger.info(f"IAM Instance Profile is disabled in LT config for {self.config.get('launch_template_name')}")
+        lt_name = self.config.get('launch_template_name', 'UnknownLT')
+        if not iam_conf or not iam_conf.get("enabled", False):
+            logger.info(f"IAM Instance Profile is disabled in LT config for {lt_name}")
             return None
-        arn = iam_conf.get("iam_instance_profile_arn"); name = iam_conf.get("iam_instance_profile_name") 
+
+        # Priority 1: Use direct ARN or Name if provided
+        arn = iam_conf.get("iam_instance_profile_arn")
+        name = iam_conf.get("iam_instance_profile_name")
+        
         if arn:
-            logger.info(f"Using existing IAM Instance Profile ARN '{arn}' for LT '{self.config.get('launch_template_name')}'.")
+            logger.info(f"Using existing IAM Instance Profile ARN '{arn}' for LT '{lt_name}'.")
             return ec2.CfnLaunchTemplate.IamInstanceProfileProperty(arn=arn)
-        if name: 
-            logger.info(f"Using existing IAM Instance Profile Name '{name}' for LT '{self.config.get('launch_template_name')}'.")
+        if name:
+            logger.info(f"Using existing IAM Instance Profile Name '{name}' for LT '{lt_name}'.")
             return ec2.CfnLaunchTemplate.IamInstanceProfileProperty(name=name)
-        logger.warning(f"IAM instance profile enabled for LT '{self.config.get('launch_template_name')}' but no ARN or Name provided."); return None
+
+        # Priority 2: Use reference to a created role to create a new Instance Profile
+        role_ref_id = iam_conf.get("launchtemplate_service_role_ref_id")
+        if role_ref_id:
+            logger.info(f"Attempting to use role reference '{role_ref_id}' for LT '{lt_name}'.")
+            
+            if not self.created_iam_roles_map:
+                logger.error(f"Role reference '{role_ref_id}' provided, but the 'created_iam_roles_map' is empty or was not passed to the LaunchTemplateStack.")
+                raise ValueError(f"Cannot resolve role reference '{role_ref_id}' because roles map is missing.")
+
+            role_object = self.created_iam_roles_map.get(role_ref_id)
+            if not role_object:
+                logger.error(f"Role reference ID '{role_ref_id}' not found in the provided created_iam_roles_map.")
+                raise ValueError(f"Could not resolve IAM Role with reference ID '{role_ref_id}'.")
+            
+            # Create a new Instance Profile to wrap the referenced role
+            profile_construct_id = f"{''.join(filter(str.isalnum, lt_name))}{role_ref_id}Profile"
+            profile_name = f"{lt_name}-{role_ref_id}-Profile"
+
+            logger.info(f"Creating new CfnInstanceProfile '{profile_name}' to wrap role '{role_object.role_name}'.")
+
+            new_instance_profile = iam.CfnInstanceProfile(
+                self,
+                profile_construct_id,
+                roles=[role_object.role_name],
+                instance_profile_name=profile_name
+            )
+            
+            # The Launch Template needs the ARN of the INSTANCE PROFILE
+            return ec2.CfnLaunchTemplate.IamInstanceProfileProperty(arn=new_instance_profile.attr_arn)
+
+        logger.warning(f"IAM instance profile enabled for LT '{lt_name}' but no ARN, Name, or valid reference ID was provided.")
+        return None
 
     def _parse_block_device_mappings(self, bdm_conf_wrapper: typing.Optional[dict]) -> typing.Optional[typing.List[ec2.CfnLaunchTemplate.BlockDeviceMappingProperty]]:
         if not bdm_conf_wrapper or not isinstance(bdm_conf_wrapper, dict) or not bdm_conf_wrapper.get("enabled", False):
@@ -398,7 +437,7 @@ class LaunchTemplateStack(NestedStack):
                 mapping_props["no_device"] = "" 
                 mapping_props.pop("ebs", None); mapping_props.pop("virtual_name", None)
             elif isinstance(no_device_val, str):
-                 mapping_props["no_device"] = no_device_val
+                mapping_props["no_device"] = no_device_val
 
             final_mapping_props = {k:v for k,v in mapping_props.items() if v is not None}
             if "device_name" in final_mapping_props: 
@@ -519,4 +558,3 @@ class LaunchTemplateStack(NestedStack):
                 if cfn_tags_list: 
                     cfn_tag_specs.append(ec2.CfnLaunchTemplate.TagSpecificationProperty(resource_type=resource_type, tags=cfn_tags_list))
         return cfn_tag_specs if cfn_tag_specs else None
-

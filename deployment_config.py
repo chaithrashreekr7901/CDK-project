@@ -598,19 +598,13 @@ def get_deployment_configurations() -> dict:
                 "vpc_id": "vpc-0682a04278f37a95c", # REQUIRED: VPC ID where this SG will be created
                 "allow_all_outbound": True,       # Optional: Overrides default. True or False.
                 "ingress_rules": [
+                    # THIS IS THE CORRECTED RULE:
                     {
                         "description": "Allow HTTP from MyWebAppALB",
-                        "peer_type": "SECURITY_GROUP_ID", 
-                        # Value should be the ID of the ALB's security group.
-                        # This could be a literal sg-id if known, or a reference if created by another CDK stack.
-                        # For CDK-managed SGs, you'd typically reference the object.
-                        # For config-driven, you might need to resolve this sg-id if ALB is also config-driven.
-                        # Example: "peer_value": "sg-07912ab450466bc24" 
-                        "peer_value_ref_id": "MyWebAppALB", # Special key to indicate peer_value is an SG from another resource created by this config system (e.g. an ALB's SG)
-                                                            # The SG stack would need logic to resolve this ref_id to an actual SG object or ID.
-                                                            # For a simpler start, you might just use literal sg-ids if they are known/fixed.
+                        "peer_type": "SECURITY_GROUP_ID_REF",  # <-- FIX 1: Use the correct reference type
+                        "peer_value": "MyWebAppALB",          # <-- FIX 2: Use the 'peer_value' key
                         "protocol": "tcp",
-                        "port": 8080 # Port your web app instances listen on
+                        "port": 8080
                     },
                     {
                         "description": "Allow SSH from Bastion Host SG",
@@ -620,7 +614,7 @@ def get_deployment_configurations() -> dict:
                     {
                         "description": "Allow SSH from specific IP (e.g., office)",
                         "peer_type": "CIDR_IPV4",
-                        "peer_value": "YOUR_OFFICE_IP/32", # <<< REPLACE
+                        "peer_value": "0.0.0.0/0", # <<< REPLACE
                         "protocol": "tcp",
                         "port": 22
                     }
@@ -674,7 +668,7 @@ def get_deployment_configurations() -> dict:
         },
         {
                 "id": "AlbSG",
-                "enabled": False,
+                "enabled": True,
                 "config": {
                     "security_group_name": "my-webapp-alb-sg",
                     "description": "Security group for MyWebAppALB",
@@ -724,7 +718,7 @@ def get_deployment_configurations() -> dict:
             },
             {
                 "id": "AsgInstanceSG",
-                "enabled": False,
+                "enabled": True,
                 "config": {
                     "security_group_name": "my-asg-instance-sg",
                     "description": "Security group for ASG web instances",
@@ -965,7 +959,7 @@ def get_deployment_configurations() -> dict:
         "launch_templates": [
             {
                 "id": "MyExampleLT",
-                "enabled": False,
+                "enabled": True,
                 "launch_template_name": "my-example-lt-v1",
                 "version_description": "Comprehensive example launch template",
 
@@ -1024,8 +1018,10 @@ def get_deployment_configurations() -> dict:
                       "iam_instance_profile": {
                         "enabled": True,
                         # Provide ARN or Name of an EXISTING Instance Profile.
-                        "iam_instance_profile_arn": "arn:aws:iam::198484116691:instance-profile/ec2-new-ssm", # STRING (Optional) <<< REPLACE
-                        # "iam_instance_profile_name": "YourExistingProfileForLT", # STRING (Optional)
+                        # "iam_instance_profile_arn": "arn:aws:iam::198484116691:instance-profile/ec2-new-ssm", # STRING (Optional) <<< REPLACE
+                        # "iam_instance_profile_name": "YourExistingProfileForLT", # STRING (Optional),
+                        # Add the new reference ID
+                        "launchtemplate_service_role_ref_id": "LaunchTemplateServiceRole",
 
                     },
                     
@@ -1192,7 +1188,7 @@ def get_deployment_configurations() -> dict:
        "application_load_balancers": [ # LIST of OBJECTS: Each object defines one Application Load Balancer.
         {
             "id": "MyWebAppALB",         # STRING (Required): Unique logical ID for this ALB configuration within the CDK app. Used for naming CDK constructs.
-            "enabled": False,             # BOOLEAN (Required): Set to 'true' to deploy this ALB, 'false' to skip its creation.
+            "enabled": True,             # BOOLEAN (Required): Set to 'true' to deploy this ALB, 'false' to skip its creation.
             "config": {                  # OBJECT (Required): Contains all specific configurations for this ALB.
                 "load_balancer_name": "my-web-app-alb-example", # STRING (Optional): The physical name of the Application Load Balancer. If omitted, a name is auto-generated by CloudFormation.
                 "vpc_id": "vpc-0682a04278f37a95c",      # STRING (Required): The ID of the VPC in which to create the ALB.
@@ -1652,7 +1648,7 @@ def get_deployment_configurations() -> dict:
         "auto_scaling_groups": [ # LIST of OBJECTS: Each object defines one Auto Scaling Group.
             {
                 "id": "MyWebAppASG",        # STRING (Required): Unique logical ID for this ASG config. Used for CDK construct ID.
-                "enabled": False,            # BOOLEAN (Required): 'true' to deploy this ASG, 'false' to skip.
+                "enabled": True,            # BOOLEAN (Required): 'true' to deploy this ASG, 'false' to skip.
                 "config": {                 # OBJECT (Required): Contains all configurations for this Auto Scaling Group.
                     "auto_scaling_group_name": "my-web-app-asg-example", # STRING (Optional): Physical name. Auto-generated if omitted.
                     "vpc_id": "vpc-0682a04278f37a95c", # STRING (Required): The VPC ID where instances will be launched.
@@ -1924,6 +1920,19 @@ def get_deployment_configurations() -> dict:
                 ]
             }
         },
+        {
+            "id": "LaunchTemplateServiceRole", # This is the ref_id
+            "enabled": True,
+            "config": {
+                "role_name": "MyWebAppInstanceRoleForLT", # Physical role name
+                "assumed_by": "ec2.amazonaws.com",
+                "managed_policies": [
+                    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+                    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+                    "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy" # For CodeDeploy agent
+                ]
+            }
+        }
         # You could define other roles here, e.g., a custom CodeBuild service role
         # for infrastructure pipelines, or cross-account roles.
     ]
