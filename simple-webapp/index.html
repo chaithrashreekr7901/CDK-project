@@ -33,6 +33,13 @@
             font-size: 0.9em;
             color: #777;
         }
+        .instance-info {
+            margin-top: 20px;
+            font-size: 0.85em;
+            color: #555;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
     </style>
 </head>
 <body>
@@ -43,6 +50,46 @@
         <div class="version">
             Application Version: 1.0.0
         </div>
+        <div class="instance-info">
+            <h2>Instance Details:</h2>
+            <p><strong>Instance ID:</strong> <span id="instance-id">Loading...</span></p>
+            <p><strong>Instance Name:</strong> <span id="instance-name">Loading...</span></p>
+            <p><strong>Availability Zone:</strong> <span id="instance-az">Loading...</span></p>
+        </div>
     </div>
+
+    <script>
+        async function fetchInstanceMetadata() {
+            try {
+                // Fetch Instance ID
+                const instanceIdResponse = await fetch('http://169.254.169.254/latest/meta-data/instance-id');
+                const instanceId = await instanceIdResponse.text();
+                document.getElementById('instance-id').textContent = instanceId;
+
+                // Fetch Availability Zone
+                const azResponse = await fetch('http://169.254.169.254/latest/meta-data/placement/availability-zone');
+                const az = await azResponse.text();
+                document.getElementById('instance-az').textContent = az;
+
+                // Fetch Instance Name (from tags, requires special handling as it's not direct metadata)
+                // Instance Name is typically a tag, which is not directly exposed by meta-data/
+                // It usually requires an AWS SDK call from the server-side, or a specific user-data script
+                // to write it to a local file. For a simple client-side HTML, we'll fetch its hostname
+                // which often includes part of the name.
+                const hostnameResponse = await fetch('http://169.254.169.254/latest/meta-data/hostname');
+                const hostname = await hostnameResponse.text();
+                document.getElementById('instance-name').textContent = hostname.split('.')[0]; // Often hostname is instance_name.domain.tld
+                
+            } catch (error) {
+                console.error('Error fetching instance metadata:', error);
+                document.getElementById('instance-id').textContent = 'N/A (Error or not EC2)';
+                document.getElementById('instance-name').textContent = 'N/A (Error or not EC2)';
+                document.getElementById('instance-az').textContent = 'N/A (Error or not EC2)';
+            }
+        }
+
+        // Call the function when the page loads
+        document.addEventListener('DOMContentLoaded', fetchInstanceMetadata);
+    </script>
 </body>
 </html>

@@ -1,5 +1,4 @@
-# In deployment_config.py -> ec2_deployments -> instances -> MyStandaloneWebServer1 -> config -> user_data
-"user_data_code": #!/bin/bash
+#!/bin/bash
 # Exit immediately if a command exits with a non-zero status.
 set -e
 # Print commands and their arguments as they are executed.
@@ -15,39 +14,55 @@ echo "--- Starting UserData script execution... $(date) ---"
 # This handles temporary network issues during boot.
 for i in {1..3}; do
     echo "Attempt $i to install packages..."
-    dnf update -y && dnf install -y httpd ruby wget && break
+    sudo dnf update -y && sudo dnf install -y httpd ruby wget && break
     echo "dnf command failed. Retrying in 20 seconds..."
     sleep 20
 done
 
 # --- Web Server Setup ---
 echo "Starting and enabling httpd..."
-systemctl start httpd
-systemctl enable httpd
+sudo systemctl start httpd
+sudo systemctl enable httpd
 
 # --- Create Health Check and Index Files ---
 echo "Creating web content..."
-echo "OK" > /var/www/html/healthz
-echo "<html><body><h1>Initial Manual Setup Complete!</h1></body></html>" > /var/www/html/index.html
+echo "OK" | sudo tee /var/www/html/healthz  # Use sudo tee for permissions
+echo "<html><body><h1>Hello from ASG Instance: $(hostname -f)</h1></body></html>" | sudo tee /var/www/html/index.html # Use sudo tee
 
 # --- Configure Port and Restart ---
 echo "Configuring httpd to listen on port 8080..."
-sed -i 's/Listen 80/Listen 8080/' /etc/httpd/conf/httpd.conf 
-systemctl restart httpd
+sudo sed -i 's/Listen 80/Listen 8080/' /etc/httpd/conf/httpd.conf
+
+# Add a VirtualHost block to explicitly serve content on port 8080
+echo "Configuring Apache VirtualHost for port 8080..."
+cat <<EOF | sudo tee /etc/httpd/conf.d/application_port.conf
+<VirtualHost *:8080>
+    DocumentRoot /var/www/html
+    <Directory /var/www/html>
+        AllowOverride None
+        Require all granted
+    </Directory>
+    ErrorLog /var/log/httpd/application_error_log
+    CustomLog /var/log/httpd/application_access_log combined
+</VirtualHost>
+EOF
+
+sudo systemctl restart httpd
 
 # --- CodeDeploy Agent Installation ---
 echo "Downloading CodeDeploy agent installer..."
+# Ensure the region in the S3 URL matches your deployment region (us-east-1 in your logs)
 CODEDEPLOY_AGENT_INSTALLER_URL="https://aws-codedeploy-us-east-1.s3.us-east-1.amazonaws.com/latest/install"
-wget "$CODEDEPLOY_AGENT_INSTALLER_URL" -O /tmp/install
+sudo wget "$CODEDEPLOY_AGENT_INSTALLER_URL" -O /tmp/install
 
 echo "Making installer executable and running..."
-chmod +x /tmp/install
-/tmp/install auto
+sudo chmod +x /tmp/install
+sudo /tmp/install auto
 
 # --- Verify CodeDeploy Agent ---
 echo "Checking CodeDeploy agent status..."
 # Give the agent a moment to start before checking its status
 sleep 10
-systemctl status codedeploy-agent || echo "CodeDeploy agent status check failed, but continuing..."
+sudo systemctl status codedeploy-agent || echo "CodeDeploy agent status check failed, but continuing..."
 
 echo "--- Finished UserData script execution. $(date) ---"
