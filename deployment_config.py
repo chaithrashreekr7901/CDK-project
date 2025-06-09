@@ -1263,7 +1263,7 @@ def get_deployment_configurations() -> dict:
                 # Subnets for the ALB. The ALB will operate in the Availability Zones of these subnets.
                 # For high availability, provide public subnet IDs from at least two different Availability Zones for an internet-facing ALB.
                 # For internal ALBs, provide private subnet IDs from at least two different Availability Zones.
-                "subnet_ids": ["subnet-0d0c5c4014c9737be", "subnet-01068ebd6184d034b"], # LIST of STRINGS (Required, if 'subnet_selection' is not used): Specific physical subnet IDs.
+                "subnet_ids": ["subnet-01068ebd6184d034b", "subnet-0d0c5c4014c9737be", "subnet-003eb439f8392c89a"], # LIST of STRINGS (Required, if 'subnet_selection' is not used): Specific physical subnet IDs.
                 
                 # "subnet_selection": { # OBJECT (Optional): Alternative to 'subnet_ids' for selecting subnets based on type or group name (tags).
                 #     "subnet_type": "PUBLIC",      # STRING (Optional): Type of subnets to select. 
@@ -1782,7 +1782,7 @@ def get_deployment_configurations() -> dict:
                                                 # Possible values: "EC2", "ELB".
                                                 # If "ELB", instances are considered unhealthy if ELB reports them as such.
                                                 # Requires 'load_balancer_names' or 'target_group_arns' to be set.
-                    "health_check_grace_period_seconds": 300, # INTEGER (Optional): Default: 300 seconds (5 minutes).
+                    "health_check_grace_period_seconds": 600, # INTEGER (Optional): Default: 300 seconds (5 minutes).
                                                               # Time ASG waits after an instance launches before checking its health.
 
                     # --- Scaling and Lifecycle ---

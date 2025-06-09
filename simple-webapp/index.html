@@ -58,51 +58,21 @@
         </div>
     </div>
 
+    <script src="instance_info.js"></script>
     <script>
-        async function fetchInstanceMetadata() {
-            let token = '';
-            try {
-                // Step 1: Get an IMDSv2 session token
-                const tokenResponse = await fetch('http://169.254.169.254/latest/api/token', {
-                    method: 'PUT',
-                    headers: {
-                        'X-aws-ec2-metadata-token-ttl-seconds': '21600' // Token valid for 6 hours
-                    }
-                });
-                token = await tokenResponse.text();
-
-                if (!tokenResponse.ok) {
-                    throw new Error(`Failed to get IMDS token: ${tokenResponse.status} ${tokenResponse.statusText}`);
-                }
-
-                const headers = { 'X-aws-ec2-metadata-token': token };
-
-                // Step 2: Fetch Instance ID
-                const instanceIdResponse = await fetch('http://169.254.169.254/latest/meta-data/instance-id', { headers });
-                const instanceId = await instanceIdResponse.text();
-                document.getElementById('instance-id').textContent = instanceId;
-
-                // Step 3: Fetch Availability Zone
-                const azResponse = await fetch('http://169.254.169.254/latest/meta-data/placement/availability-zone', { headers });
-                const az = await azResponse.text();
-                document.getElementById('instance-az').textContent = az;
-
-                // Step 4: Fetch Instance Name (from hostname)
-                const hostnameResponse = await fetch('http://169.254.169.254/latest/meta-data/hostname', { headers });
-                const hostname = await hostnameResponse.text();
-                // Often hostname is instance_name.domain.tld, so splitting might give the name
-                document.getElementById('instance-name').textContent = hostname.split('.')[0];
-                
-            } catch (error) {
-                console.error('Error fetching instance metadata (IMDSv2 likely needed/failed):', error);
-                document.getElementById('instance-id').textContent = 'N/A (Error or not EC2 - check IMDSv2)';
-                document.getElementById('instance-name').textContent = 'N/A (Error or not EC2 - check IMDSv2)';
-                document.getElementById('instance-az').textContent = 'N/A (Error or not EC2 - check IMDSv2)';
+        // Populate instance details using the data from instance_info.js
+        document.addEventListener('DOMContentLoaded', () => {
+            if (typeof INSTANCE_DETAILS !== 'undefined') {
+                document.getElementById('instance-id').textContent = INSTANCE_DETAILS.id;
+                document.getElementById('instance-name').textContent = INSTANCE_DETAILS.name;
+                document.getElementById('instance-az').textContent = INSTANCE_DETAILS.az;
+            } else {
+                console.error('INSTANCE_DETAILS not found. instance_info.js might not have loaded or generated correctly.');
+                document.getElementById('instance-id').textContent = 'N/A (Data Missing)';
+                document.getElementById('instance-name').textContent = 'N/A (Data Missing)';
+                document.getElementById('instance-az').textContent = 'N/A (Data Missing)';
             }
-        }
-
-        // Call the function when the page loads
-        document.addEventListener('DOMContentLoaded', fetchInstanceMetadata);
+        });
     </script>
 </body>
 </html>
