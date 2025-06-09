@@ -1,5 +1,3 @@
-# cdk_project/pipeline/application_pipelines_group_nested_stack.py
-
 import logging
 import typing
 import aws_cdk as cdk
@@ -19,7 +17,6 @@ class ApplicationPipelinesGroupNestedStack(NestedStack):
                  created_vpcs_map: typing.Dict[str, ec2.IVpc],
                  created_ec2_instances_map: typing.Dict[str, ec2.Instance],
                  created_asgs_map: typing.Dict[str, autoscaling.AutoScalingGroup],
-                 # CHANGED: Expects iam.IRole objects from MainOrchestrator
                  created_iam_roles_map: typing.Dict[str, iam.IRole],
                  description: typing.Optional[str] = None,
                  **kwargs) -> None:
@@ -33,7 +30,7 @@ class ApplicationPipelinesGroupNestedStack(NestedStack):
             return
 
         # Prepare a new map containing only ARNs (strings) to pass to individual pipelines
-        # This resolves the TypeError when passing IRole objects to from_role_arn
+        # This is needed because IndividualApplicationPipelineNestedStack's from_role_arn expects strings.
         iam_roles_map_for_individual_pipelines: typing.Dict[str, str] = {}
         for role_id, role_obj in created_iam_roles_map.items():
             if hasattr(role_obj, 'role_arn'):
@@ -47,7 +44,6 @@ class ApplicationPipelinesGroupNestedStack(NestedStack):
                 pipeline_id = pipeline_config["id"]
                 logger.info(f"ApplicationPipelinesGroupNestedStack: Creating individual pipeline NestedStack for '{pipeline_id}'.")
 
-                # Pass the maps directly to the individual pipeline stack
                 IndividualApplicationPipelineNestedStack(
                     self,
                     f"Pipeline-{pipeline_id}", # Unique ID for the nested stack
@@ -55,8 +51,7 @@ class ApplicationPipelinesGroupNestedStack(NestedStack):
                     created_vpcs_map=created_vpcs_map,
                     created_ec2_instances_map=created_ec2_instances_map,
                     created_asgs_map=created_asgs_map,
-                    # CHANGED: Pass the new map containing ARNs (strings)
-                    created_iam_roles_map=iam_roles_map_for_individual_pipelines,
+                    created_iam_roles_map=iam_roles_map_for_individual_pipelines, # Pass the map with ARNs (strings)
                     description=f"Nested Stack for application pipeline: {pipeline_id}"
                 )
             else:

@@ -1,5 +1,3 @@
-# cdk_project/pipeline/individual_app_pipeline_nested_stack.py
-
 import os
 import typing
 import logging
@@ -10,7 +8,6 @@ from aws_cdk import (
     Environment,
     aws_codecommit as codecommit,
     aws_codepipeline as codepipeline,
-    # Keep the general alias for other standard actions
     aws_codepipeline_actions as codepipeline_actions,
     aws_codebuild as codebuild,
     aws_codedeploy as codedeploy,
@@ -22,7 +19,6 @@ from aws_cdk import (
     Fn
 )
 
-# This is the correct class name for CodeStar Connections source actions
 from aws_cdk.aws_codepipeline_actions import CodeStarConnectionsSourceAction
 
 from constructs import Construct
@@ -37,9 +33,9 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
     def __init__(self, scope: Construct, id: str, *,
                  pipeline_config: dict,
                  created_vpcs_map: typing.Dict[str, ec2.IVpc],
-                 created_ec2_instances_map: typing.Dict[str, typing.Any], # Type hint changed to Any as it holds Ec2InstanceNestedStack objects
-                 created_asgs_map: typing.Dict[str, autoscaling.AutoScalingGroup],
-                 created_iam_roles_map: typing.Dict[str, str], # Expects ARNs (strings)
+                 created_ec2_instances_map: typing.Dict[str, typing.Any], # Holds Ec2InstanceNestedStack objects
+                 created_asgs_map: typing.Dict[str, typing.Any], # Holds AutoScalingGroupStack objects
+                 created_iam_roles_map: typing.Dict[str, str], # Expects ARNs (strings) for this stack
                  description: typing.Optional[str] = None,
                  **kwargs) -> None:
         super().__init__(scope, id, description=description, **kwargs)
@@ -47,7 +43,6 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
         pipeline_id = pipeline_config["id"]
         logger.info(f"IndividualApplicationPipelineNestedStack '{id}': Initializing for pipeline '{pipeline_id}'")
 
-        # Basic tags for this individual pipeline stack
         cdk.Tags.of(self).add("PipelineId", pipeline_id)
         cdk.Tags.of(self).add("ManagedBy", "CDK-AppPipeline")
         cdk.Tags.of(self).add("AppType", pipeline_config.get("tags", {}).get("Application", "Generic"))
@@ -175,15 +170,13 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
             target_resource_type = pipeline_config["target_resource_type"]
             codedeploy_service_role: typing.Optional[iam.IRole] = None
 
-            # Logic to retrieve CodeDeploy Service Role from the map (now contains ARNs)
             codedeploy_role_ref_id = deploy_config.get("codedeploy_service_role_ref_id")
             if codedeploy_role_ref_id:
-                codedeploy_role_arn = created_iam_roles_map.get(codedeploy_role_ref_id)
+                codedeploy_role_arn = created_iam_roles_map.get(codedeploy_role_ref_id) # This map contains ARNs
                 if not codedeploy_role_arn:
                     logger.error(f"Pipeline '{pipeline_id}': CodeDeploy service role ARN with ref_id '{codedeploy_role_ref_id}' not found in created_iam_roles_map.")
                     raise ValueError(f"CodeDeploy service role ARN '{codedeploy_role_ref_id}' not resolved for pipeline '{pipeline_id}'")
                 
-                # IMPORT THE ROLE FROM ARN
                 codedeploy_service_role = iam.Role.from_role_arn(
                     self,
                     f"{pipeline_id}{codedeploy_role_ref_id}Import",
@@ -194,7 +187,6 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                 logger.error(f"Pipeline '{pipeline_id}': 'codedeploy_service_role_ref_id' is missing in deploy_config.")
                 raise ValueError(f"'codedeploy_service_role_ref_id' is required for CodeDeploy deployment in pipeline '{pipeline_id}'")
 
-            # Define a mapping for common deployment config names to their CDK objects
             deployment_config_map = {
                 "AllAtOnce": codedeploy.ServerDeploymentConfig.ALL_AT_ONCE,
                 "HalfAtATime": codedeploy.ServerDeploymentConfig.HALF_AT_A_TIME,
@@ -227,8 +219,8 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                 )
 
                 if target_resource_type == "EC2_INSTANCE":
-                    target_instance_id_str: str = "" # This will hold the instance ID as a string
-                    instance_name_tag_val: str = "" # Initialize for use in tags
+                    target_instance_id_str: str = ""
+                    instance_name_tag_val: str = ""
 
                     existing_instance_id = pipeline_config.get("existing_target_resource_id")
                     
@@ -247,7 +239,6 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                             logger.error(f"Pipeline '{pipeline_id}': EC2 instance '{instance_ref_id}' not found in created resources.")
                             raise ValueError(f"EC2 instance target '{instance_ref_id}' not resolved from created resources for pipeline '{pipeline_id}'")
                         
-                        # Corrected: Access 'instance_id_token' from the Ec2InstanceNestedStack object
                         if hasattr(created_instance_obj, 'instance_id_token') and created_instance_obj.instance_id_token:
                             target_instance_id_str = created_instance_obj.instance_id_token
                         else:
@@ -278,21 +269,28 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                 elif target_resource_type == "AUTOSCALING_GROUP":
                     asg_ref_id = pipeline_config.get("target_resource_ref_id")
                     asg_name = ""
-                    target_asg: typing.Optional[autoscaling.AutoScalingGroup] = None
+                    target_asg_l2_construct: typing.Optional[autoscaling.AutoScalingGroup] = None 
+                    
+                    enable_install_agent_in_codedeploy = False 
 
                     existing_asg_name = pipeline_config.get("existing_target_resource_id")
 
                     if existing_asg_name:
-                        target_asg = autoscaling.AutoScalingGroup.from_auto_scaling_group_name(
+                        target_asg_l2_construct = autoscaling.AutoScalingGroup.from_auto_scaling_group_name(
                             self, f"{pipeline_id}ExistingASG", existing_asg_name
                         )
                         asg_name = existing_asg_name
-                        logger.info(f"Pipeline '{pipeline_id}': Using existing Auto Scaling Group '{existing_asg_name}' as target.")
+                        logger.info(f"Pipeline '{pipeline_id}': Using existing Auto Scaling Group '{existing_asg_name}' as target. CodeDeploy agent installation (install_agent) will be skipped as the ASG is imported or managed externally.")
                     elif asg_ref_id:
-                        target_asg = created_asgs_map.get(asg_ref_id)
-                        if target_asg:
-                            asg_name = target_asg.auto_scaling_group_name
-                            logger.info(f"Pipeline '{pipeline_id}': Using created Auto Scaling Group '{asg_ref_id}' (Name: {asg_name}) as target.")
+                        asg_stack_obj = created_asgs_map.get(asg_ref_id)
+                        if asg_stack_obj:
+                            if hasattr(asg_stack_obj, 'auto_scaling_group_resource') and asg_stack_obj.auto_scaling_group_resource:
+                                target_asg_l2_construct = asg_stack_obj.auto_scaling_group_resource
+                                asg_name = target_asg_l2_construct.auto_scaling_group_name
+                                logger.info(f"Pipeline '{pipeline_id}': Using created Auto Scaling Group '{asg_ref_id}' (Name: {asg_name}) as target. CodeDeploy agent installation (install_agent) will be set to False, assuming it's handled by Launch Template UserData.")
+                            else:
+                                logger.error(f"Pipeline '{pipeline_id}': AutoScalingGroupStack object for '{asg_ref_id}' does not have 'auto_scaling_group_resource'.")
+                                raise ValueError(f"Auto Scaling Group resource not found for created ASG '{asg_ref_id}'")
                         else:
                             logger.error(f"Pipeline '{pipeline_id}': Auto Scaling Group '{asg_ref_id}' not found in created resources.")
                             raise ValueError(f"ASG target '{asg_ref_id}' not resolved from created resources for pipeline '{pipeline_id}'")
@@ -300,7 +298,7 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                         logger.error(f"Pipeline '{pipeline_id}': Neither 'target_resource_ref_id' nor 'existing_target_resource_id' provided for AUTOSCALING_GROUP.")
                         raise ValueError(f"ASG target not specified for pipeline '{pipeline_id}'")
 
-                    if not target_asg:
+                    if not target_asg_l2_construct:
                         logger.error(f"Pipeline '{pipeline_id}': Auto Scaling Group target could not be resolved for CodeDeploy.")
                         raise ValueError(f"ASG target not resolved for pipeline '{pipeline_id}'")
 
@@ -308,9 +306,9 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                         self, f"{pipeline_id}CodeDeployDG",
                         deployment_group_name=deploy_config.get("codedeploy_deployment_group_name", f"{pipeline_id}-DG"),
                         application=app,
-                        auto_scaling_groups=[target_asg],
+                        auto_scaling_groups=[target_asg_l2_construct],
                         deployment_config=resolved_deployment_config,
-                        install_agent=deploy_config.get("codedeploy_install_agent", False)
+                        install_agent=enable_install_agent_in_codedeploy
                     )
                 else:
                     logger.error(f"Pipeline '{pipeline_id}': Unsupported target_resource_type for CodeDeploy: {target_resource_type}")
@@ -325,7 +323,7 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
             elif deploy_config["deployment_strategy"] == "SSM_RUN_COMMAND":
                 if target_resource_type == "EC2_INSTANCE":
                     instance_ref_id = pipeline_config.get("target_resource_ref_id")
-                    target_instance_obj = created_ec2_instances_map.get(instance_ref_id) # Get the object
+                    target_instance_obj = created_ec2_instances_map.get(instance_ref_id)
                     target_ids = []
 
                     existing_instance_id = pipeline_config.get("existing_target_resource_id")
@@ -334,7 +332,7 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                         target_ids = [existing_instance_id]
                         logger.info(f"Pipeline '{pipeline_id}': Using existing EC2 instance '{existing_instance_id}' for SSM Run Command.")
                     elif target_instance_obj and hasattr(target_instance_obj, 'instance_id_token') and target_instance_obj.instance_id_token:
-                        target_ids = [target_instance_obj.instance_id_token] # Correctly access the token
+                        target_ids = [target_instance_obj.instance_id_token]
                         logger.info(f"Pipeline '{pipeline_id}': Using created EC2 instance '{instance_ref_id}' (ID: {target_instance_obj.instance_id_token}) for SSM Run Command.")
                     else:
                         logger.error(f"Pipeline '{pipeline_id}': EC2 instance target not resolved for SSM Run Command.")
@@ -352,7 +350,6 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
 
                 elif target_resource_type == "AUTOSCALING_GROUP":
                     asg_ref_id = pipeline_config.get("target_resource_ref_id")
-                    target_asg = created_asgs_map.get(asg_ref_id)
                     asg_name = ""
 
                     existing_asg_name = pipeline_config.get("existing_target_resource_id")
@@ -360,12 +357,21 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                     if existing_asg_name:
                         asg_name = existing_asg_name
                         logger.info(f"Pipeline '{pipeline_id}': Using existing ASG '{existing_asg_name}' for SSM Run Command.")
-                    elif target_asg:
-                        asg_name = target_asg.auto_scaling_group_name
-                        logger.info(f"Pipeline '{pipeline_id}': Using created ASG '{asg_ref_id}' (Name: {asg_name}) for SSM Run Command.")
+                    elif asg_ref_id:
+                        asg_stack_obj = created_asgs_map.get(asg_ref_id)
+                        if asg_stack_obj:
+                            if hasattr(asg_stack_obj, 'auto_scaling_group_resource') and asg_stack_obj.auto_scaling_group_resource:
+                                asg_name = asg_stack_obj.auto_scaling_group_resource.auto_scaling_group_name
+                                logger.info(f"Pipeline '{pipeline_id}': Using created ASG '{asg_ref_id}' (Name: {asg_name}) for SSM Run Command.")
+                            else:
+                                logger.error(f"Pipeline '{pipeline_id}': AutoScalingGroupStack object for '{asg_ref_id}' does not have 'auto_scaling_group_resource'.")
+                                raise ValueError(f"Auto Scaling Group resource not found for created ASG '{asg_ref_id}' for SSM Run Command.")
+                        else:
+                            logger.error(f"Pipeline '{pipeline_id}': ASG name not resolved for SSM Run Command (ref_id: {asg_ref_id}).")
+                            raise ValueError(f"ASG target not resolved for SSM Run Command for pipeline '{pipeline_id}'")
                     else:
-                        logger.error(f"Pipeline '{pipeline_id}': ASG name not resolved for SSM Run Command.")
-                        raise ValueError(f"ASG target not resolved for SSM Run Command for pipeline '{pipeline_id}'")
+                        logger.error(f"Pipeline '{pipeline_id}': Neither 'target_resource_ref_id' nor 'existing_target_resource_id' provided for AUTOSCALING_GROUP.")
+                        raise ValueError(f"ASG target not specified for pipeline '{pipeline_id}'")
 
                     if not asg_name:
                         logger.error(f"Pipeline '{pipeline_id}': ASG name could not be determined for SSM Run Command.")

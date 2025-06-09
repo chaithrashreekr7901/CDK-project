@@ -1,5 +1,3 @@
-# cdk_project/main_orchestrator_stack.py
-
 from aws_cdk import (
     Stack, Tags, Environment,
     aws_ec2 as ec2,
@@ -47,7 +45,6 @@ class MainOrchestratorStack(Stack):
         created_vpcs_map: typing.Dict[str, ec2.IVpc] = {}
         created_ec2_instances_map: typing.Dict[str, ec2.Instance] = {}
         created_asgs_map: typing.Dict[str, autoscaling.AutoScalingGroup] = {}
-        # Changed type hint to store iam.IRole objects directly
         created_iam_roles_map: typing.Dict[str, iam.IRole] = {}
 
         # Initialize stack constructs to None outside conditional blocks
@@ -66,10 +63,11 @@ class MainOrchestratorStack(Stack):
                     self, "IamRolesGroup",
                     iam_roles_config=iam_roles_config_group,
                     description="Nested Stack for all configured IAM Roles."
+                    # IMPORTANT: This stack should NOT take any parameters that are outputs of other nested stacks (Ec2DeploymentsGroup, ApplicationPipelinesGroup).
+                    # Its inputs should be static or external to avoid circular dependencies.
                 )
                 if hasattr(iam_roles_group_stack_construct, 'created_roles_map'):
-                    # Populate created_iam_roles_map with iam.IRole objects directly
-                    created_iam_roles_map = iam_roles_group_stack_construct.created_roles_map
+                    created_iam_roles_map.update(iam_roles_group_stack_construct.created_roles_map)
                     logger.info(f"MainOrchestrator: Populated created_iam_roles_map with {len(created_iam_roles_map)} IAM Role objects.")
                 else:
                     logger.warning("MainOrchestrator: IamRolesGroupNestedStack does not expose 'created_roles_map'.")
@@ -90,7 +88,7 @@ class MainOrchestratorStack(Stack):
                     description="Nested Stack for all configured VPC instances."
                 )
                 if hasattr(vpc_group_stack_construct, 'created_vpcs_map'):
-                    created_vpcs_map = vpc_group_stack_construct.created_vpcs_map
+                    created_vpcs_map.update(vpc_group_stack_construct.created_vpcs_map)
                     logger.info(f"MainOrchestrator: Populated created_vpcs_map with {len(created_vpcs_map)} VPCs.")
                 else:
                     logger.warning("MainOrchestrator: VpcDeploymentsGroupNestedStack does not expose 'created_vpcs_map'.")
@@ -123,7 +121,7 @@ class MainOrchestratorStack(Stack):
                     self, "RdsDeploymentsGroup",
                     rds_deployments_config=rds_config_group,
                     created_vpcs_map=created_vpcs_map,
-                    created_iam_roles_map=created_iam_roles_map # This map now contains IAM Role objects
+                    created_iam_roles_map=created_iam_roles_map
                 )
             else:
                 logger.warning("MainOrchestrator: RDS group enabled, but no instances defined.")
@@ -136,7 +134,7 @@ class MainOrchestratorStack(Stack):
             if s3_config_group.get("buckets"):
                 logger.info(f"MainOrchestrator: S3 Bucket deployment group is enabled.")
                 S3DeploymentsGroupNestedStack(
-                    self, "S3BucketsGroup", s3_deployments_config=s3_config_group
+                    self, "S3BucketsGroup", s3_config_group=s3_config_group
                 )
             else:
                 logger.warning(f"MainOrchestrator: S3 group enabled, but no buckets defined.")
@@ -161,16 +159,16 @@ class MainOrchestratorStack(Stack):
                     created_vpcs_map=created_vpcs_map,
                     created_ec2_instances_map=created_ec2_instances_map,
                     created_asgs_map=created_asgs_map,
-                    created_iam_roles_map=created_iam_roles_map, # This map now contains IAM Role objects
+                    created_iam_roles_map=created_iam_roles_map,
                     description="Nested Stack for all configured EC2-related resources."
                 )
                 if hasattr(ec2_deployments_group_stack_construct, 'deployed_instance_stacks'):
-                    created_ec2_instances_map = ec2_deployments_group_stack_construct.deployed_instance_stacks
+                    created_ec2_instances_map.update(ec2_deployments_group_stack_construct.deployed_instance_stacks)
                     logger.info(f"MainOrchestrator: Populated created_ec2_instances_map with {len(created_ec2_instances_map)} instances.")
                 else:
                     logger.warning("MainOrchestrator: Ec2DeploymentsGroupNestedStack does not expose 'deployed_instance_stacks'.")
                 if hasattr(ec2_deployments_group_stack_construct, 'deployed_asg_stacks'):
-                    created_asgs_map = ec2_deployments_group_stack_construct.deployed_asg_stacks
+                    created_asgs_map.update(ec2_deployments_group_stack_construct.deployed_asg_stacks)
                     logger.info(f"MainOrchestrator: Populated created_asgs_map with {len(created_asgs_map)} ASGs.")
                 else:
                     logger.warning("MainOrchestrator: Ec2DeploymentsGroupNestedStack does not expose 'deployed_asg_stacks'.")
@@ -192,13 +190,15 @@ class MainOrchestratorStack(Stack):
                     created_vpcs_map=created_vpcs_map,
                     created_ec2_instances_map=created_ec2_instances_map,
                     created_asgs_map=created_asgs_map,
-                    created_iam_roles_map=created_iam_roles_map, # This map now contains IAM Role objects
+                    created_iam_roles_map=created_iam_roles_map,
                     description="Nested Stack for all configured application deployment pipelines."
                 )
-                # ADDED: Explicitly add dependency to break potential circularity
-                if iam_roles_group_stack_construct: # Check if the IAM roles stack was actually created
+                if iam_roles_group_stack_construct:
                     application_pipelines_group_stack_construct.add_dependency(iam_roles_group_stack_construct)
                     logger.info("MainOrchestrator: Added explicit dependency: ApplicationPipelinesGroup depends on IamRolesGroup.")
+                if ec2_deployments_group_stack_construct:
+                    application_pipelines_group_stack_construct.add_dependency(ec2_deployments_group_stack_construct)
+                    logger.info("MainOrchestrator: Added explicit dependency: ApplicationPipelinesGroup depends on Ec2DeploymentsGroup.")
             else:
                 logger.warning("MainOrchestrator: Pipeline group enabled, but no pipeline definitions found in 'pipelines' list.")
         else:

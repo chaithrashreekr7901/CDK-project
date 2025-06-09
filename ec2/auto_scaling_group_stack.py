@@ -38,8 +38,13 @@ class AutoScalingGroupStack(NestedStack):
                  instance_security_group: typing.Optional[ec2.ISecurityGroup], 
                  resolved_target_groups_with_lb_sgs_and_ports: list[typing.Tuple[elbv2.ITargetGroup, typing.Optional[ec2.ISecurityGroup], typing.Optional[int]]],
                  asg_config_entry: dict, 
+                 created_iam_roles_map: typing.Dict[str, iam.IRole], 
                  **kwargs) -> None:
-        super().__init__(scope, id, **kwargs)
+        
+        # Filter kwargs to only pass those valid for NestedStack
+        nested_stack_valid_kwargs = {k: v for k, v in kwargs.items() if k in ['env', 'stack_name', 'synthesizer', 'termination_protection']}
+        super().__init__(scope, id, **nested_stack_valid_kwargs)
+
 
         if not asg_config_entry or not asg_config_entry.get("enabled"):
             logger.info(f"Auto Scaling Group configuration for {id} is not provided or not enabled. Skipping.")
@@ -94,7 +99,7 @@ class AutoScalingGroupStack(NestedStack):
             )
         elif health_check_type_str == "ELB":
             if not resolved_target_groups_with_lb_sgs_and_ports:
-                 logger.warning(f"ASG '{asg_logical_id}': Health check type is ELB, but no target groups are resolved. Health check might not function correctly.")
+                logger.warning(f"ASG '{asg_logical_id}': Health check type is ELB, but no target groups are resolved. Health check might not function correctly.")
             asg_health_check = autoscaling.HealthCheck.elb(
                 grace=Duration.seconds(health_check_grace_period_seconds)
             )
@@ -123,7 +128,7 @@ class AutoScalingGroupStack(NestedStack):
             elif policy_name_upper == "OLDESTLAUNCHCONFIGURATION": 
                 policy_enum_name = "OLDEST_LAUNCH_CONFIGURATION"
             elif policy_name_upper == "ALLOCATIONSTRATEGY": 
-                 policy_enum_name = "ALLOCATION_STRATEGY"
+                policy_enum_name = "ALLOCATION_STRATEGY"
             else:
                 policy_enum_name = policy_name_upper 
 
@@ -138,12 +143,47 @@ class AutoScalingGroupStack(NestedStack):
             logger.info(f"No valid termination policies found for ASG {asg_logical_id}, defaulting to DEFAULT.")
             termination_policies.append(autoscaling.TerminationPolicy.DEFAULT)
         
+        # --- Resolve and pass the IAM Role to the ASG ---
+        # NOTE: The 'role' property on autoscaling.AutoScalingGroup should NOT be set
+        # when a 'launch_template' is provided, as the role is expected to be in the LT.
+        # We only resolve it here for potential logging or if it were needed for other ASG props,
+        # but it will NOT be passed to the ASG constructor directly.
+        instance_role_ref_id = "LaunchTemplateServiceRole" 
+        resolved_role_from_map = created_iam_roles_map.get(instance_role_ref_id)
+
+        # instance_role = None # This variable is no longer needed to be passed to ASG constructor.
+        if resolved_role_from_map:
+            if isinstance(resolved_role_from_map, iam.Role):
+                # instance_role = resolved_role_from_map # No longer assigning to instance_role for ASG constructor
+                logger.info(f"ASG '{asg_logical_id}': IAM role object '{instance_role_ref_id}' was directly resolved from map. (Not passed to ASG constructor).")
+            elif isinstance(resolved_role_from_map, str):
+                try:
+                    # instance_role = iam.Role.from_role_arn( # No longer assigning to instance_role for ASG constructor
+                    iam.Role.from_role_arn( # Just import to ensure it's valid, but don't assign to ASG role prop
+                        self,
+                        f"{asg_logical_id}{instance_role_ref_id}Import",
+                        resolved_role_from_map, 
+                        mutable=False 
+                    )
+                    logger.info(f"ASG '{asg_logical_id}': IAM role ARN '{instance_role_ref_id}' was successfully imported. (Not passed to ASG constructor).")
+                except Exception as e:
+                    logger.error(f"ASG '{asg_logical_id}': Failed to import IAM Role '{instance_role_ref_id}' from ARN '{resolved_role_from_map}': {e}", exc_info=True)
+                    # We still raise an error here because if the role cannot be imported,
+                    # it implies a fundamental configuration issue that might affect the LT.
+                    raise ValueError(f"Failed to import IAM Role '{instance_role_ref_id}' for ASG '{asg_logical_id}'")
+            else:
+                logger.warning(f"ASG '{asg_logical_id}': IAM role for '{instance_role_ref_id}' is neither an IRole object nor a string ARN. Cannot resolve. (Not passed to ASG constructor).")
+        else:
+            logger.warning(f"ASG '{asg_logical_id}': No IAM Role for '{instance_role_ref_id}' found in created_iam_roles_map. Instances launched by ASG might not have correct permissions. Please ensure the Launch Template contains the correct instance profile.")
+            cdk.Annotations.of(self).add_warning(f"ASG '{asg_logical_id}': No instance IAM role provided. Consider adding 'LaunchTemplateServiceRole' to created_iam_roles_map or specifying an existing role directly in the Launch Template.")
+
+
         self.asg = autoscaling.AutoScalingGroup(
             self,
             f"{asg_logical_id}Resource", 
             auto_scaling_group_name=asg_name,
             vpc=vpc,
-            launch_template=launch_template,
+            launch_template=launch_template, # The LT handles the role
             min_capacity=config.get("min_capacity"),
             max_capacity=config.get("max_capacity"),
             desired_capacity=config.get("desired_capacity", config.get("min_capacity")),
@@ -153,6 +193,7 @@ class AutoScalingGroupStack(NestedStack):
             new_instances_protected_from_scale_in=config.get("new_instances_protected_from_scale_in", False),
             termination_policies=termination_policies,
             capacity_rebalance=config.get("capacity_rebalancing", False),
+            # REMOVED: role=instance_role # Do NOT set role here when launch_template is provided
         )
         Tags.of(self.asg).add("Name", asg_name if asg_name else f"{cdk.Aws.STACK_NAME}-{asg_logical_id}")
 
@@ -204,8 +245,8 @@ class AutoScalingGroupStack(NestedStack):
                     logger.info(f"ASG '{asg_logical_id}': Set TargetGroupARNs on CfnAutoScalingGroup: {target_group_arns_for_asg}")
                 else:
                     logger.error(f"ASG '{asg_logical_id}': Could not get CfnAutoScalingGroup to set TargetGroupARNs.")
-        else:
-            logger.info(f"No resolved target groups provided for ASG {asg_logical_id}.")
+            else:
+                logger.info(f"No resolved target groups provided for ASG {asg_logical_id}.")
 
 
         for policy_conf in config.get("scaling_policies", []):
@@ -223,7 +264,7 @@ class AutoScalingGroupStack(NestedStack):
                     continue
                 
                 policy_cooldown_duration = Duration.seconds(tt_config.get("cooldown_seconds", 
-                                                                      tt_config.get("scale_out_cooldown_seconds", default_cooldown_seconds_val)))
+                                                                        tt_config.get("scale_out_cooldown_seconds", default_cooldown_seconds_val)))
                 disable_scale_in_val = tt_config.get("disable_scale_in", False)
 
                 # Convert PascalCase config string to UPPER_SNAKE_CASE for enum lookup
@@ -358,7 +399,7 @@ class AutoScalingGroupStack(NestedStack):
                 Tags.of(self.asg).add(key, value) 
                 logger.info(f"ASG {asg_logical_id}: Added tag '{key}':'{value}'. Propagation is default for ASG L2 construct tags.")
                 if tag_info.get("propagate_at_launch") == False:
-                     cdk.Annotations.of(self).add_warning(f"ASG Tag '{key}': Config requests propagate_at_launch=False. "
+                    cdk.Annotations.of(self).add_warning(f"ASG Tag '{key}': Config requests propagate_at_launch=False. "
                                                          f"CDK L2 ASG tags propagate by default. For explicit non-propagation, "
                                                          f"consider using L1 CfnAutoScalingGroup or ensure instance tagging handles this.")
             else:

@@ -529,6 +529,63 @@ def get_deployment_configurations() -> dict:
         ]
     }
     
+    
+    
+    
+    
+    # cdk_project/deployment_config.py (Snippet for iam_roles_config)
+
+    iam_roles_config = {
+    "deploy": True,
+    "description": "IAM Roles managed by the orchestrator for various services.",
+    "roles": [
+        {
+            "id": "CodeDeployServiceRole", # Logical ID for this role
+            "enabled": True,
+            "config": {
+                "role_name": "MyOrchestratorCodeDeployServiceRole", # Actual AWS IAM role name
+                "assumed_by": "codedeploy.amazonaws.com",
+                "managed_policies": ["arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"]
+            }
+        },
+        {
+            "id": "CodePipelineServiceRole", # Logical ID for CodePipeline Service Role
+            "enabled": True,
+            "config": {
+                "role_name": "MyApplicationCodePipelineServiceRole", # Actual AWS IAM role name
+                "assumed_by": "codepipeline.amazonaws.com",
+                "managed_policies": [
+                    "arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess", # Broad access for simplicity
+                    # In production, consider limiting to:
+                    # "arn:aws:iam::aws:policy/AWSCodeCommitReadOnly",
+                    # "arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess",
+                    # "arn:aws:iam::aws:policy/AWSCodeDeployDeployerAccess",
+                    # "arn:aws:iam::aws:policy/AmazonS3FullAccess", # For artifact bucket
+                    # "arn:aws:iam::aws:policy/service-role/AWSCodeStarSourceConnection" # If using CodeStarSourceConnection
+                ]
+            }
+        },
+        {
+            "id": "LaunchTemplateServiceRole", # This is the ref_id
+            "enabled": True,
+            "config": {
+                "role_name": "MyWebAppInstanceRoleForLT", # Physical role name
+                "assumed_by": "ec2.amazonaws.com",
+                "managed_policies": [
+                    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+                    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+                    "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy" # For CodeDeploy agent
+                ]
+            }
+        },
+        
+        # You could define other roles here, e.g., a custom CodeBuild service role
+        # for infrastructure pipelines, or cross-account roles.
+    ]
+}
+
+# The rest of your final_config would then include this:
+    
  
     # --- EC2 Deployments (Includes direct Instances and Launch Templates) ---
     ec2_deployments_config = {
@@ -991,10 +1048,10 @@ def get_deployment_configurations() -> dict:
             "enabled": True,
             "type": "SHELL_SCRIPT", # Optional, defaults to SHELL_SCRIPT. Good to be explicit.
             # Option 1: Path to script (if you were using this)
-            # "user_data_script_path": "./scripts/my_app_setup.sh", 
+        "user_data_script_path": "./user_data_scripts/my_ec2_bootstrap.sh", 
 
          # Option 2: Direct inline code (this is the new example)
-            "user_data_code": "#!/bin/bash\nsudo yum update -y\nsudo yum install -y httpd\nsudo systemctl start httpd\nsudo systemctl enable httpd\necho \"OK\" | sudo tee /var/www/html/healthz\necho \"<html><body><h1>Hello from ASG Instance: $(hostname -f)</h1></body></html>\" | sudo tee /var/www/html/index.html\n# Configure httpd to listen on 8080\nsudo sed -i 's/Listen 80/Listen 8080/' /etc/httpd/conf/httpd.conf\nsudo systemctl restart httpd\nlogger \"User data for MyExampleLT (ASG) completed.\""
+            # "user_data_code": "#!/bin/bash\nsudo yum update -y\nsudo yum install -y httpd\nsudo systemctl start httpd\nsudo systemctl enable httpd\necho \"OK\" | sudo tee /var/www/html/healthz\necho \"<html><body><h1>Hello from ASG Instance: $(hostname -f)</h1></body></html>\" | sudo tee /var/www/html/index.html\n# Configure httpd to listen on 8080\nsudo sed -i 's/Listen 80/Listen 8080/' /etc/httpd/conf/httpd.conf\nsudo systemctl restart httpd\nlogger \"User data for MyExampleLT (ASG) completed.\""
             
             # Option 3: Pre-base64 encoded (if you were using this)
             #"user_data_b64": "YOUR_PRE_ENCODED_SCRIPT_HERE"
@@ -1025,10 +1082,10 @@ def get_deployment_configurations() -> dict:
                       "iam_instance_profile": {
                         "enabled": True,
                         # Provide ARN or Name of an EXISTING Instance Profile.
-                        # "iam_instance_profile_arn": "arn:aws:iam::198484116691:instance-profile/ec2-new-ssm", # STRING (Optional) <<< REPLACE
+                        "iam_instance_profile_arn": "arn:aws:iam::198484116691:instance-profile/ec2-new-ssm", # STRING (Optional) <<< REPLACE
                         # "iam_instance_profile_name": "YourExistingProfileForLT", # STRING (Optional),
                         # Add the new reference ID
-                        "launchtemplate_service_role_ref_id": "LaunchTemplateServiceRole",
+                        # "launchtemplate_service_role_ref_id": "LaunchTemplateServiceRole",
 
                     },
                     
@@ -1670,7 +1727,6 @@ def get_deployment_configurations() -> dict:
                         #     "subnet_group_name": "MyApplicationSubnets" # STRING (Optional): Selects subnets by tag.
                         # }
                     },
-
                     # --- Launch Configuration: Use EITHER launch_template OR mixed_instances_policy OR (legacy) launch_configuration_name ---
                     "launch_template": {    # OBJECT (Recommended): Specifies the Launch Template to use.
 		
@@ -1895,57 +1951,7 @@ def get_deployment_configurations() -> dict:
             }
         ]
     }
-# cdk_project/deployment_config.py (Snippet for iam_roles_config)
 
-    iam_roles_config = {
-    "deploy": True,
-    "description": "IAM Roles managed by the orchestrator for various services.",
-    "roles": [
-        {
-            "id": "CodeDeployServiceRole", # Logical ID for this role
-            "enabled": True,
-            "config": {
-                "role_name": "MyOrchestratorCodeDeployServiceRole", # Actual AWS IAM role name
-                "assumed_by": "codedeploy.amazonaws.com",
-                "managed_policies": ["arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"]
-            }
-        },
-        {
-            "id": "CodePipelineServiceRole", # Logical ID for CodePipeline Service Role
-            "enabled": True,
-            "config": {
-                "role_name": "MyApplicationCodePipelineServiceRole", # Actual AWS IAM role name
-                "assumed_by": "codepipeline.amazonaws.com",
-                "managed_policies": [
-                    "arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess", # Broad access for simplicity
-                    # In production, consider limiting to:
-                    # "arn:aws:iam::aws:policy/AWSCodeCommitReadOnly",
-                    # "arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess",
-                    # "arn:aws:iam::aws:policy/AWSCodeDeployDeployerAccess",
-                    # "arn:aws:iam::aws:policy/AmazonS3FullAccess", # For artifact bucket
-                    # "arn:aws:iam::aws:policy/service-role/AWSCodeStarSourceConnection" # If using CodeStarSourceConnection
-                ]
-            }
-        },
-        {
-            "id": "LaunchTemplateServiceRole", # This is the ref_id
-            "enabled": True,
-            "config": {
-                "role_name": "MyWebAppInstanceRoleForLT", # Physical role name
-                "assumed_by": "ec2.amazonaws.com",
-                "managed_policies": [
-                    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-                    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
-                    "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy" # For CodeDeploy agent
-                ]
-            }
-        }
-        # You could define other roles here, e.g., a custom CodeBuild service role
-        # for infrastructure pipelines, or cross-account roles.
-    ]
-}
-
-# The rest of your final_config would then include this:
 # final_config = {
 #     # ... other sections ...
 #     "iam_roles": iam_roles_config, # <-- Now includes CodePipeline role
@@ -1959,8 +1965,8 @@ def get_deployment_configurations() -> dict:
             {
                 "id": "WebAppDeploymentPipeline", # Logical ID for this pipeline within the config
                 "enabled": True, # Enable/disable this specific pipeline
-                "target_resource_type": "EC2_INSTANCE", # "EC2_INSTANCE" or "AUTOSCALING_GROUP"
-                "target_resource_ref_id": "MyStandaloneWebServer1", # Logical ID from ec2_deployments.instances or ec2_deployments.auto_scaling_groups
+                "target_resource_type": "AUTOSCALING_GROUP", # "EC2_INSTANCE" or "AUTOSCALING_GROUP"
+                "target_resource_ref_id": "MyWebAppASG", # Logical ID from ec2_deployments.instances or ec2_deployments.auto_scaling_groups
                 # Alternatively, if you need to deploy to an existing resource not created by this CDK:
                 # "existing_target_resource_id": "i-08037b8a8fc1ab3e3", # Physical EC2 Instance ID or ASG Name/ARN
                 # "existing_target_vpc_id": "vpc-0682a04278f37a95c", # Required for existing targets to find the VPC

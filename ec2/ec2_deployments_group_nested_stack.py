@@ -1,4 +1,3 @@
-# CRMP-PROJECT/cdk_project/ec2/ec2_deployments_group_nested_stack.py
 import logging
 import copy
 import typing
@@ -266,7 +265,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
 
                 vpc_for_lt: typing.Optional[ec2.IVpc] = None
                 lt_vpc_id_from_config = merged_lt_full_entry.get("config", {}).get("vpc_id") or \
-                                        merged_lt_full_entry.get("vpc_id")
+                                         merged_lt_full_entry.get("vpc_id")
                 if not lt_vpc_id_from_config:
                     for asg_c in ec2_deployments_config.get("auto_scaling_groups", []):
                         if asg_c.get("config",{}).get("launch_template",{}).get("launch_template_ref_id") == lt_config_id:
@@ -303,7 +302,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                                 if ref_id in self.resolved_sgs_map:
                                     resolved_group_ids.append(self.resolved_sgs_map[ref_id].security_group_id)
                                 else:
-                                    logger.warning(f"LT '{lt_config_id}': Could not resolve SG ref_id '{ref_id}' for network interface. Assuming it's a physical ID or will be handled by LT default SG.")
+                                    logger.warning(f"LT '{lt_config_id}': Could not resolve SG ref_id '{ref_id}'. Assuming it's a physical ID or will be handled by LT default SG.")
                                     resolved_group_ids.append(ref_id)
                             ni_conf["groups"] = resolved_group_ids
                             ni_conf.pop("groups_ref_ids", None)
@@ -320,7 +319,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                         self, lt_nested_stack_id,
                         lt_config=merged_lt_full_entry,
                         vpc=vpc_for_lt,
-                        # *** THIS IS THE FIX FOR THE IAM ROLE ERROR ***
+                        created_security_groups_map=self.resolved_sgs_map,
                         created_iam_roles_map=self.created_iam_roles_map,
                         description=f"Nested Stack for EC2 Launch Template: {lt_name_for_desc}"
                     )
@@ -367,8 +366,8 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                     merged_alb_config_block.pop("security_group_refs", None)
                     logger.info(f"ALB '{alb_id_val}': Updated config with resolved security_group_ids: {resolved_sg_ids_for_alb}")
 
-                if "target_groups" in merged_alb_config_block:
-                    for tg_def in merged_alb_config_block.get("target_groups", []):
+                if "targets" in merged_alb_config_block:
+                    for tg_def in merged_alb_config_block.get("targets", []):
                         if "config" in tg_def and "targets" in tg_def["config"]:
                             for target_item in tg_def["config"].get("targets", []):
                                 if isinstance(target_item, dict) and "instance_id_ref" in target_item:
@@ -383,7 +382,6 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                                             logger.warning(f"ALB '{alb_id_val}', TG '{tg_def.get('id')}': Instance stack for '{instance_ref_id}' found but no 'instance_id_token'.")
                                     else:
                                         logger.warning(f"ALB '{alb_id_val}', TG '{tg_def.get('id')}': Could not resolve target instance_id_ref '{instance_ref_id}'. Instance stack not found.")
-
                 alb_cfg_entry["config"] = merged_alb_config_block
 
                 alb_name_for_desc = merged_alb_config_block.get("load_balancer_name", alb_id_val)
@@ -431,8 +429,8 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                 temp_nlb_config_block = merge_dicts(global_defaults, nlb_specific_defaults)
                 merged_nlb_config_block = merge_dicts(temp_nlb_config_block, nlb_cfg_entry["config"])
 
-                if "target_groups" in merged_nlb_config_block:
-                    for tg_def in merged_nlb_config_block.get("target_groups", []):
+                if "targets" in merged_nlb_config_block:
+                    for tg_def in merged_nlb_config_block.get("targets", []):
                         if "config" in tg_def and "targets" in tg_def["config"]:
                             for target_item in tg_def["config"].get("targets", []):
                                 if isinstance(target_item, dict) and "instance_id_ref" in target_item:
@@ -579,10 +577,10 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                                 actual_ni_list_for_asg_sg_check = lt_network_interfaces_cfg_val
                             sg_id_from_lt_data_for_asg = None
                             if actual_ni_list_for_asg_sg_check and \
-                               isinstance(actual_ni_list_for_asg_sg_check[0], dict) and \
-                               actual_ni_list_for_asg_sg_check[0].get("groups") and \
-                               isinstance(actual_ni_list_for_asg_sg_check[0]["groups"], list) and \
-                               actual_ni_list_for_asg_sg_check[0]["groups"]:
+                                isinstance(actual_ni_list_for_asg_sg_check[0], dict) and \
+                                actual_ni_list_for_asg_sg_check[0].get("groups") and \
+                                isinstance(actual_ni_list_for_asg_sg_check[0]["groups"], list) and \
+                                actual_ni_list_for_asg_sg_check[0]["groups"]:
                                 sg_id_from_lt_data_for_asg = actual_ni_list_for_asg_sg_check[0]["groups"][0]
                             if sg_id_from_lt_data_for_asg:
                                 found_sg_obj_for_asg = None
@@ -670,6 +668,7 @@ class Ec2DeploymentsGroupNestedStack(NestedStack):
                         instance_security_group=instance_security_group_for_asg,
                         resolved_target_groups_with_lb_sgs_and_ports=resolved_tgs_with_lb_sgs_and_ports,
                         asg_config_entry=asg_cfg_entry,
+                        created_iam_roles_map=created_iam_roles_map,
                         description=f"Nested Stack for Auto Scaling Group: {asg_name_for_desc}"
                     )
                     self.deployed_asg_stacks[asg_id_val] = asg_stack
