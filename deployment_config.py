@@ -333,10 +333,156 @@ def get_deployment_configurations() -> dict:
         "deploy": False, 
         "description": "Configuration group for all RDS Database Instances and Clusters.",
         "instances": [
+            {
+                "id": "MySQLExampleDB", 
+                "enabled": True, 
+                "deployment_architecture": "INSTANCE", # "INSTANCE" or "CLUSTER" (for Aurora)
+                "engine_type": "MYSQL", 
+                # Available engine_type options (non-Aurora): 
+                # "MYSQL", "POSTGRESQL", "MARIADB", 
+                # "ORACLE_SE1", "ORACLE_SE2", "ORACLE_EE", "ORACLE_EE_CDB",
+                # "SQL_SERVER_EX", "SQL_SERVER_WEB", "SQL_SERVER_SE", "SQL_SERVER_EE"
+                # For Aurora: "AURORA_MYSQL", "AURORA_POSTGRESQL" (handled by AuroraClusterStack)
+                "config": {
+                    # --- General Settings ---
+                    "instance_identifier": "mysql-example-main", # Physical name in AWS console
+                    "engine_version": "8.0.36", # Must match engine_type. E.g., "15.5" for PG, "19.0.0.0.ru-..." for Oracle
+                    
+                    # --- Instance Class ---
+                    # Choose from: https://aws.amazon.com/rds/instance-types/
+                    # Standard classes (includes m classes): e.g., "db.m5.large", "db.m6g.large" (Graviton)
+                    # Memory optimized classes (includes r and x classes): e.g., "db.r5.large", "db.x2g.medium"
+                    # Burstable classes (includes t classes): e.g., "db.t3.medium", "db.t4g.medium"
+                    "instance_type": "t3.medium", 
+
+                    # --- Storage ---
+                    "allocated_storage_gb": 500, # In GiB
+                    "storage_type": "gp3", # Options: "standard", "gp2", "gp3", "io1", "io2"
+                    # "iops": 3000, # Required for "io1", "io2". Optional & configurable for "gp3".
+                    # "storage_throughput": 125, # Only for "gp3". In MiBps.
+	                "enable_storage_autoscaling": True, # Flag for storage autoscaling
+	                "max_allocated_storage_gb": 200, # Used if enable_storage_autoscaling is True
+	
+
+                    # --- Credentials ---
+                    "credentials": {
+                        "source": "GENERATE_NEW_SECRET", # "GENERATE_NEW_SECRET" or "USE_EXISTING_SECRET_ARN"
+                        "master_username": "adminuser", 
+                        "generate_new_secret_options": { # Used if source is "GENERATE_NEW_SECRET"
+                            # "secret_name_prefix": "rds/mysql-example", 
+                            # "password_length": 20,
+                            # "exclude_characters": "\"@/\\' " 
+                        },
+                        # "existing_secret_arn": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:NAME-SUFFIX" # Used if source is "USE_EXISTING_SECRET_ARN"
+                    },
+
+                    # --- Connectivity ---
+                    "vpc_config": {
+                        # Option 1: Use an existing VPC (looked up by ID)
+                        "lookup_existing_vpc_by_id": "vpc-0682a04278f37a95c", # <<< YOUR ACTUAL DevAlphaVPC ID or other existing VPC
+                        # Option 2: Use a VPC created by this CDK app (referenced by its logical ID from vpcs section)
+                        # "use_cdk_created_vpc_id": "DevAlphaVPC", # Matches 'id' from 'vpcs.instances' list
+                        
+                        # Note on "Create New VPC for this RDS": 
+                        #   This is best handled by defining the VPC in the 'vpcs' section and then referencing it here
+                        #   using 'use_cdk_created_vpc_id' or 'lookup_existing_vpc_by_id' after it's deployed.
+                        #   An RDS stack should not typically create a whole new VPC itself.
+
+                        "subnet_type_for_rds": "PRIVATE_WITH_EGRESS", # Options: "PRIVATE_WITH_EGRESS", "PRIVATE_ISOLATED"
+                                                                    # DbInstanceStack uses this for ec2.SubnetSelection
+		            "security_group_config": {
+		                            "source": "CREATE_NEW", # Options: "CREATE_NEW", "USE_EXISTING_IDS"
+		                            "create_new_options": { # Used if source is "CREATE_NEW"
+		                                "name": "mysql-example-db-sg", 
+		                                "description": "SG for MySQL Example DB",
+		                                "allow_all_outbound": True,  # Default
+		                                "allow_ingress_from_sg_ids": ["sg-07912ab450466bc24"], # <<< YOUR APP SG ID(s)
+					                    # "allow_ingress_from_cidrs": ["10.10.x.x/yy"], # Optional
+					                    # "allow_ingress_from_self": False # Optional
+					
+		                            },
+		                            # "existing_ids": ["sg-xxxxxxxxxxxxxxxxx, "sg-yyyyyyyyyyyyyyyyy""] # Used if source is "USE_EXISTING_IDS"
+		                        }
+                    },
+                    "port": 3306, # Engine default will be used if not specified
+                    "publicly_accessible": False, # Recommended: False
+
+                    # --- Database Options ---
+                    "database_name": "MyExampleDB", # Initial database to create
+                    "parameter_group": {
+                        "source": "DEFAULT", # "DEFAULT", "EXISTING_NAME", "CREATE_NEW"
+                        # "name": "your-custom-mysql80-param-group", # Required if source is "EXISTING_NAME"
+                        # "create_new_options": {
+                        #     # "family": "mysql8.0", # Usually auto-detected by DbInstanceStack
+                        #     "name_prefix": "mysql-example", 
+                        #     "description": "Custom PG for MySQL Example",
+                        #     "parameters": {"max_connections": "300", "innodb_buffer_pool_size": "2147483648"} # Example
+                        # }
+                    },
+                    "option_group": {
+                        "source": "DEFAULT", # "DEFAULT", "EXISTING_NAME", "CREATE_NEW"
+                        # "name": "your-custom-mysql-option-group", # Required if source is "EXISTING_NAME"
+                        # "create_new_options": {
+                        #     # "engine_name_for_og": "mysql", # Usually auto-detected
+                        #     # "major_engine_version_for_og": "8.0", # Usually auto-detected
+                        #     "name_prefix": "mysql-example-og",
+                        #     "description": "Custom OG for MySQL Example",
+                        #     "configurations": [ # List of rds.OptionConfiguration props
+                        #         {"name": "MARIADB_AUDIT_PLUGIN", "settings": {"SERVER_AUDIT_EVENTS": "CONNECT,QUERY"}}
+                        #     ]
+                        # }
+                    },
+
+                    # --- Availability & Durability ---
+                    "multi_az": False, # Set to True for production/HA
+                    # "availability_zone": "us-east-1c", # Specify if multi_az is False and you need a specific AZ# Only if multi_az_deployment is False
+
+                    # --- Backup ---
+	                "enable_automated_backups": True, # Flag for automated backups
+                    "backup_retention_days": 14, # 0 to disable, 1-35 days
+                    "preferred_backup_window": "06:00-07:00", # UTC, e.g., "hh:mm-hh:mm"
+                    "copy_tags_to_snapshot": True,
+                    # "replicate_automated_backups_to_region": "us-west-2", # Optional: ARN of KMS key in target region for encryption
+                    # "replicated_automated_backups_kms_key_arn": "arn:aws:kms:us-west-2:ACCOUNT_ID:key/KEY_ID"
+
+                    # --- Encryption ---
+	               "storage_encrypted": True, # Default is True recommended, but good to be explicit
+	               "enable_custom_kms_encryption": False, # Flag for custom KMS key
+                    # "kms_key_id": "arn:aws:kms:YOUR_REGION:YOUR_ACCOUNT_ID:key/YOUR_RDS_KMS_KEY_ID", # For customer-managed KMS key
+
+                    # --- Logging and Monitoring ---
+                    "monitoring":{
+                        "cloudwatch_logs_exports": ["error", "general", "slowquery", "audit"],
+                        "enable_performance_insights": True, 
+                        "performance_insights_retention_period_days": 7, # 7 (free) or up to 731 (2 years, paid)
+                        # "performance_insights_kms_key_id": "arn:aws:kms:...", # Optional KMS key for PI
+                        "enable_enhanced_monitoring": True, # Flag for Enhanced Monitoring
+                        "monitoring_interval_seconds": 60, # 0 (disabled), 1, 5, 10, 15, 30, 60 for Enhanced Monitoring # Used if                       enable_enhanced_monitoring is True
+                        # "monitoring_role_arn": "arn:aws:iam::ACCOUNT_ID:role/RDSEnhancedMonitoringRole" # Optional custom role
+                        # "enable_devops_guru": True, # If supported and desired, False, # Flag for DevOps Guru
+                        # "devops_guru_kms_key_id": "arn:aws:kms:..." # Optional KMS key for DevOps Guru
+                    },
+
+                    # --- Maintenance ---
+                    "preferred_maintenance_window": "sun:07:30-sun:08:30", # UTC, e.g., "ddd:hh:mm-ddd:hh:mm"
+                    "auto_minor_version_upgrade": True,
+                    "allow_major_version_upgrade": False, # Caution with this in prod
+
+                    # --- Additional Configuration ---
+                    "deletion_protection": False, # Recommended for production
+                    "iam_database_authentication_enabled": False,
+                    # "license_model": "license-included", # Required for SQL Server, Oracle (e.g. "bring-your-own-license")
+                    
+                    "tags": {"CodeDeploy": "AppEC2", "Application": "MySQLExample"}
+                }
+            }
+            # Add more RDS instance definitions here
+        ],
+        "instances": [
             # ... (your existing DbInstanceStack configurations) ...
             {
                 "id": "AuroraMySQLProdCluster", 
-                "enabled": True, 
+                "enabled": False, 
                 "deployment_architecture": "CLUSTER", # <<< Key to differentiate
                 "engine_type": "AURORA_MYSQL", # Options: "AURORA_MYSQL", "AURORA_POSTGRESQL"
                 "config": {
@@ -435,6 +581,207 @@ def get_deployment_configurations() -> dict:
                     "deletion_protection": True,
                     "iam_database_authentication_enabled": False,
 
+                    "tags": {"Environment": "Production", "Application": "AuroraMySQLService"}
+                }
+            },
+            {
+                "id": "MySQLExampleDB", 
+                "enabled": False, 
+                "deployment_architecture": "INSTANCE", # "INSTANCE" or "CLUSTER" (for Aurora)
+                "engine_type": "MYSQL", 
+                # Available engine_type options (non-Aurora): 
+                # "MYSQL", "POSTGRESQL", "MARIADB", 
+                # "ORACLE_SE1", "ORACLE_SE2", "ORACLE_EE", "ORACLE_EE_CDB",
+                # "SQL_SERVER_EX", "SQL_SERVER_WEB", "SQL_SERVER_SE", "SQL_SERVER_EE"
+                # For Aurora: "AURORA_MYSQL", "AURORA_POSTGRESQL" (handled by AuroraClusterStack)
+                "config": {
+                    # --- General Settings ---
+                    "instance_identifier": "mysql-example-main", # Physical name in AWS console
+                    "engine_version": "8.0.36", # Must match engine_type. E.g., "15.5" for PG, "19.0.0.0.ru-..." for Oracle
+                    
+                    # --- Instance Class ---
+                    # Choose from: https://aws.amazon.com/rds/instance-types/
+                    # Standard classes (includes m classes): e.g., "db.m5.large", "db.m6g.large" (Graviton)
+                    # Memory optimized classes (includes r and x classes): e.g., "db.r5.large", "db.x2g.medium"
+                    # Burstable classes (includes t classes): e.g., "db.t3.medium", "db.t4g.medium"
+                    "instance_type": "t3.medium", 
+
+                    # --- Storage ---
+                    "allocated_storage_gb": 500, # In GiB
+                    "storage_type": "gp3", # Options: "standard", "gp2", "gp3", "io1", "io2"
+                    # "iops": 3000, # Required for "io1", "io2". Optional & configurable for "gp3".
+                    # "storage_throughput": 125, # Only for "gp3". In MiBps.
+	                "enable_storage_autoscaling": True, # Flag for storage autoscaling
+	                "max_allocated_storage_gb": 200, # Used if enable_storage_autoscaling is True
+	
+
+                    # --- Credentials ---
+                    "credentials": {
+                        "source": "GENERATE_NEW_SECRET", # "GENERATE_NEW_SECRET" or "USE_EXISTING_SECRET_ARN"
+                        "master_username": "adminuser", 
+                        "generate_new_secret_options": { # Used if source is "GENERATE_NEW_SECRET"
+                            # "secret_name_prefix": "rds/mysql-example", 
+                            # "password_length": 20,
+                            # "exclude_characters": "\"@/\\' " 
+                        },
+                        # "existing_secret_arn": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:NAME-SUFFIX" # Used if source is "USE_EXISTING_SECRET_ARN"
+                    },
+
+                    # --- Connectivity ---
+                    "vpc_config": {
+                        # Option 1: Use an existing VPC (looked up by ID)
+                        # "lookup_existing_vpc_by_id": "vpc-0b2b7d17da846043d", # <<< YOUR ACTUAL DevAlphaVPC ID or other existing VPC
+                        "use_cdk_created_vpc_id": "DevAlphaVPC",
+                        # Option 2: Use a VPC created by this CDK app (referenced by its logical ID from vpcs section)
+                        # "use_cdk_created_vpc_id": "DevAlphaVPC", # Matches 'id' from 'vpcs.instances' list
+                        
+                        # Note on "Create New VPC for this RDS": 
+                        #   This is best handled by defining the VPC in the 'vpcs' section and then referencing it here
+                        #   using 'use_cdk_created_vpc_id' or 'lookup_existing_vpc_by_id' after it's deployed.
+                        #   An RDS stack should not typically create a whole new VPC itself.
+
+                        "subnet_type_for_rds": "PRIVATE_WITH_EGRESS", # Options: "PRIVATE_WITH_EGRESS", "PRIVATE_ISOLATED"
+                                                                    # DbInstanceStack uses this for ec2.SubnetSelection
+		            "security_group_config": {
+		                            "source": "CREATE_NEW", # Options: "CREATE_NEW", "USE_EXISTING_IDS"
+		                            "create_new_options": { # Used if source is "CREATE_NEW"
+		                                "name": "mysql-example-db-sg", 
+		                                "description": "SG for MySQL Example DB",
+		                                "allow_all_outbound": True,  # Default
+		                                "allow_ingress_from_sg_ids": ["sg-07912ab450466bc24"], # <<< YOUR APP SG ID(s)
+					                    # "allow_ingress_from_cidrs": ["10.10.x.x/yy"], # Optional
+					                    # "allow_ingress_from_self": False # Optional
+					
+		                            },
+		                            # "existing_ids": ["sg-xxxxxxxxxxxxxxxxx, "sg-yyyyyyyyyyyyyyyyy""] # Used if source is "USE_EXISTING_IDS"
+		                        }
+                    },
+                    "port": 3306, # Engine default will be used if not specified
+                    "publicly_accessible": False, # Recommended: False
+
+                    # --- Database Options ---
+                    "database_name": "MyExampleDB", # Initial database to create
+                    "parameter_group": {
+                        "source": "DEFAULT", # "DEFAULT", "EXISTING_NAME", "CREATE_NEW"
+                        # "name": "your-custom-mysql80-param-group", # Required if source is "EXISTING_NAME"
+                        # "create_new_options": {
+                        #     # "family": "mysql8.0", # Usually auto-detected by DbInstanceStack
+                        #     "name_prefix": "mysql-example", 
+                        #     "description": "Custom PG for MySQL Example",
+                        #     "parameters": {"max_connections": "300", "innodb_buffer_pool_size": "2147483648"} # Example
+                        # }
+                    },
+                    "option_group": {
+                        "source": "DEFAULT", # "DEFAULT", "EXISTING_NAME", "CREATE_NEW"
+                        # "name": "your-custom-mysql-option-group", # Required if source is "EXISTING_NAME"
+                        # "create_new_options": {
+                        #     # "engine_name_for_og": "mysql", # Usually auto-detected
+                        #     # "major_engine_version_for_og": "8.0", # Usually auto-detected
+                        #     "name_prefix": "mysql-example-og",
+                        #     "description": "Custom OG for MySQL Example",
+                        #     "configurations": [ # List of rds.OptionConfiguration props
+                        #         {"name": "MARIADB_AUDIT_PLUGIN", "settings": {"SERVER_AUDIT_EVENTS": "CONNECT,QUERY"}}
+                        #     ]
+                        # }
+                    },
+
+                    # --- Availability & Durability ---
+                    "multi_az": False, # Set to True for production/HA
+                    # "availability_zone": "us-east-1c", # Specify if multi_az is False and you need a specific AZ# Only if multi_az_deployment is False
+
+                    # --- Backup ---
+	                "enable_automated_backups": True, # Flag for automated backups
+                    "backup_retention_days": 14, # 0 to disable, 1-35 days
+                    "preferred_backup_window": "06:00-07:00", # UTC, e.g., "hh:mm-hh:mm"
+                    "copy_tags_to_snapshot": True,
+                    # "replicate_automated_backups_to_region": "us-west-2", # Optional: ARN of KMS key in target region for encryption
+                    # "replicated_automated_backups_kms_key_arn": "arn:aws:kms:us-west-2:ACCOUNT_ID:key/KEY_ID"
+
+                    # --- Encryption ---
+	               "storage_encrypted": True, # Default is True recommended, but good to be explicit
+	               "enable_custom_kms_encryption": False, # Flag for custom KMS key
+                    # "kms_key_id": "arn:aws:kms:YOUR_REGION:YOUR_ACCOUNT_ID:key/YOUR_RDS_KMS_KEY_ID", # For customer-managed KMS key
+
+                    # --- Logging and Monitoring ---
+                    "monitoring":{
+                        "cloudwatch_logs_exports": ["error", "general", "slowquery", "audit"],
+                        "enable_performance_insights": True, 
+                        "performance_insights_retention_period_days": 7, # 7 (free) or up to 731 (2 years, paid)
+                        # "performance_insights_kms_key_id": "arn:aws:kms:...", # Optional KMS key for PI
+                        "enable_enhanced_monitoring": True, # Flag for Enhanced Monitoring
+                        "monitoring_interval_seconds": 60, # 0 (disabled), 1, 5, 10, 15, 30, 60 for Enhanced Monitoring # Used if                       enable_enhanced_monitoring is True
+                        # "monitoring_role_arn": "arn:aws:iam::ACCOUNT_ID:role/RDSEnhancedMonitoringRole" # Optional custom role
+                        # "enable_devops_guru": True, # If supported and desired, False, # Flag for DevOps Guru
+                        # "devops_guru_kms_key_id": "arn:aws:kms:..." # Optional KMS key for DevOps Guru
+                    },
+
+                    # --- Maintenance ---
+                    "preferred_maintenance_window": "sun:07:30-sun:08:30", # UTC, e.g., "ddd:hh:mm-ddd:hh:mm"
+                    "auto_minor_version_upgrade": True,
+                    "allow_major_version_upgrade": False, # Caution with this in prod
+
+                    # --- Additional Configuration ---
+                    "deletion_protection": False, # Recommended for production
+                    "iam_database_authentication_enabled": False,
+                    # "license_model": "license-included", # Required for SQL Server, Oracle (e.g. "bring-your-own-license")
+                    
+                    "tags": {"CodeDeploy": "AppEC2", "Application": "MySQLExample"}
+                }
+            },
+            {
+                "id": "AuroraMySQLProdCluster", 
+                "enabled": False, 
+                "deployment_architecture": "CLUSTER", 
+                "engine_type": "AURORA_MYSQL", 
+                "config": {
+                    "cluster_identifier": "aurora-mysql-prod-cluster",
+                    "engine_version": "8.0.mysql_aurora.3.06.0",
+                    "default_database_name": "MyApplicationDB",
+                    "credentials": {
+                        "source": "GENERATE_NEW_SECRET", 
+                        "master_username": "auroraadmin", 
+                        "generate_new_secret_options": { "secret_name_prefix": "rds/aurora-mysql-prod" },
+                    },
+                    "vpc_config": {
+                        # "lookup_existing_vpc_by_id":"vpc-0b2b7d17da846043d", # Replace with your actual VPC ID if needed
+                        "use_cdk_created_vpc_id": "DevAlphaVPC",
+                        "subnet_type_for_rds": "PRIVATE_WITH_EGRESS", 
+                        "security_group_config": {
+                            "source": "CREATE_NEW", 
+                            "create_new_options": { 
+                                "name": "aurora-mysql-prod-cluster-sg", 
+                                "description": "SG for Aurora MySQL Prod Cluster",
+                                "allow_ingress_from_sg_ids": ["sg-07912ab450466bc24"], # Replace with your actual SG ID if needed
+                            }
+                        }
+                    },
+                    "port": 3306,
+                    "instances_config": {
+                        "count": 2, 
+                        "instance_type": "db.r6g.large",
+                        "auto_minor_version_upgrade_instances": True,
+                        "publicly_accessible_instances": False,
+                        "enable_performance_insights_instances": True,
+                        "performance_insights_retention_period_instances": 7,
+                        "ca_certificate_identifier_instances": "rds-ca-rsa2048-g1",
+                    },
+                    "enable_serverless_v2_scaling": False,
+                    "enable_automated_backups": True,
+                    "backup_retention_days": 14,
+                    "preferred_backup_window": "04:00-05:00",
+                    "copy_tags_to_snapshot": True,
+                    "enable_backtrack": False,
+                    "storage_encrypted": True,
+                    "enable_custom_kms_encryption": False,
+                    "monitoring": {
+                        "cloudwatch_logs_exports": ["audit", "error", "general", "slowquery"],
+                        "enable_http_endpoint": False,
+                    },
+                    "cluster_parameter_group": {"source": "DEFAULT"},
+                    "instance_parameter_group": {"source": "DEFAULT"},
+                    "preferred_maintenance_window": "mon:05:30-mon:06:30",
+                    "deletion_protection": True,
+                    "iam_database_authentication_enabled": False,
                     "tags": {"Environment": "Production", "Application": "AuroraMySQLService"}
                 }
             }

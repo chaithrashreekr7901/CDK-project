@@ -1,115 +1,134 @@
-# CRMP-PROJECT/cdk_project/rds/db_instance_stack.py
+# cdk_project/rds/db_instance_stack.py
 import logging
-import json 
-import re 
+import json
+import re
+import typing
+
 from aws_cdk import (
     NestedStack, Tags, RemovalPolicy, Duration, CfnOutput, Stack, Aws, Fn,
     aws_ec2 as ec2,
     aws_rds as rds,
     aws_secretsmanager as secretsmanager,
-    aws_iam as iam, 
-    aws_kms as kms  
+    aws_iam as iam,
+    aws_kms as kms
 )
 from constructs import Construct
 
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s: %(message)s')
 
 class DbInstanceStack(NestedStack):
-    db_instance: rds.IDatabaseInstance 
+    db_instance: rds.IDatabaseInstance
 
-    def __init__(self, scope: Construct, construct_id: str, 
-                 rds_config: dict, 
-                 vpc: ec2.IVpc | None, 
+    def __init__(self, scope: Construct, construct_id: str, *,
+                 rds_config: dict,
+                 vpc: ec2.IVpc | None,
+                 security_group: typing.Optional[ec2.ISecurityGroup] = None,
+                 created_iam_roles_map: typing.Dict[str, iam.IRole] = None,
                  **kwargs) -> None:
-        
-        # Explicitly remove rds_config and vpc from kwargs if they are present,
-        # to prevent them from being passed to the NestedStack base class.
-        # This is a defensive measure, as they are named args and shouldn't be in kwargs.
-        kwargs.pop('rds_config', None) 
-        kwargs.pop('vpc', None)
 
-        super().__init__(scope, construct_id, **kwargs) # Pass through only relevant kwargs
+        nested_stack_valid_kwargs = {k: v for k, v in kwargs.items() if k in ['env', 'stack_name', 'synthesizer', 'termination_protection', 'description']}
+        super().__init__(scope, construct_id, **nested_stack_valid_kwargs)
 
-        self.config = rds_config # Now assign after super call
-        # self.passed_vpc = vpc # Store the passed vpc object if needed for clarity
+        self.config = rds_config
+        self.passed_vpc = vpc
+        self.passed_security_group = security_group
+        self.created_iam_roles_map = created_iam_roles_map if created_iam_roles_map is not None else {}
 
         instance_identifier = self.config.get('instance_identifier')
         if not instance_identifier:
-            base_id = construct_id.replace("RdsNestedStack", "") 
-            instance_identifier = f"{Stack.of(self).stack_name.lower()}-{base_id.lower()}"[:60]
+            base_id = construct_id.replace("DbInstanceNestedStack", "").replace("RdsNestedStack", "").lower()
+            if not base_id:
+                base_id = Stack.of(self).stack_name.lower()
+            instance_identifier = f"{base_id}-db"[:60]
             instance_identifier = re.sub(r"[^a-z0-9-]", "-", instance_identifier)
             logger.warning(f"RDS instance_identifier not provided for {construct_id}, generated: {instance_identifier}")
-        
+
+        self.instance_identifier = instance_identifier
+
         engine_type = self.config.get("engine_type", "").upper()
         if not engine_type:
-            raise ValueError(f"engine_type is required in rds_config for {instance_identifier}")
+            raise ValueError(f"engine_type is required in rds_config for {self.instance_identifier}")
 
-        logger.info(f"DbInstanceStack '{construct_id}': Initializing for RDS instance ID '{instance_identifier}' with engine type '{engine_type}'.")
+        logger.info(f"DbInstanceStack '{construct_id}': Initializing for RDS instance ID '{self.instance_identifier}' with engine type '{engine_type}'.")
 
         # --- Resolve VPC ---
-        resolved_vpc: ec2.IVpc | None = vpc # Use the passed VPC object directly
-        if not resolved_vpc: 
-            logger.info(f"No VPC object passed for {instance_identifier}, attempting lookup based on its own config.")
-            resolved_vpc = self._resolve_vpc_via_lookup(instance_identifier, construct_id)
-        
+        resolved_vpc: ec2.IVpc | None = self.passed_vpc
         if not resolved_vpc:
-             raise ValueError(f"VPC could not be resolved for RDS instance {instance_identifier}. Ensure 'vpc_config' is correctly set with 'lookup_existing_vpc_by_id' or that an IVpc is passed from parent.")
+            logger.info(f"No VPC object passed for {self.instance_identifier}, attempting lookup based on its own config.")
+            resolved_vpc = self._resolve_vpc_via_lookup(self.instance_identifier, construct_id)
+
+        if not resolved_vpc:
+            raise ValueError(f"VPC could not be resolved for RDS instance {self.instance_identifier}. Ensure 'vpc_config' is correctly set with 'lookup_existing_vpc_by_id' or that an IVpc is passed from parent.")
         # --- End VPC Resolution ---
 
         db_engine = self._get_db_instance_engine(engine_type, self.config)
         default_engine_port = self._get_default_port(engine_type)
-        
-        db_credentials, generated_secret_resource = self._resolve_credentials(instance_identifier, construct_id)
-        
-        vpc_cfg_for_subnet = self.config.get("vpc_config", {}) 
+
+        db_credentials, generated_secret_resource = self._resolve_credentials(self.instance_identifier, construct_id)
+
+        vpc_cfg_for_subnet = self.config.get("vpc_config", {})
         subnet_type_str = vpc_cfg_for_subnet.get("subnet_type_for_rds", "PRIVATE_WITH_EGRESS").upper()
-        rds_subnet_type = getattr(ec2.SubnetType, subnet_type_str, ec2.SubnetType.PRIVATE_WITH_EGRESS)
-        if not hasattr(ec2.SubnetType, subnet_type_str): logger.warning(f"Invalid subnet_type_for_rds: '{subnet_type_str}'. Defaulting to PRIVATE_WITH_EGRESS.")
-        
-        rds_subnet_selection = ec2.SubnetSelection(subnet_type=rds_subnet_type)
-        
-        db_security_groups = self._resolve_security_groups(resolved_vpc, instance_identifier, default_engine_port, construct_id)
-        parameter_group = self._resolve_parameter_group(instance_identifier, db_engine, engine_type, construct_id)
-        option_group = self._resolve_option_group(instance_identifier, db_engine, construct_id)
+
+        rds_subnet_type_enum: ec2.SubnetType
+        if subnet_type_str == "PUBLIC":
+            rds_subnet_type_enum = ec2.SubnetType.PUBLIC
+        elif subnet_type_str == "PRIVATE_WITH_EGRESS":
+            rds_subnet_type_enum = ec2.SubnetType.PRIVATE_WITH_EGRESS
+        elif subnet_type_str == "PRIVATE_ISOLATED":
+            rds_subnet_type_enum = ec2.SubnetType.PRIVATE_ISOLATED
+        else:
+            logger.warning(f"Invalid subnet_type_for_rds: '{subnet_type_str}' for RDS {self.instance_identifier}. Defaulting to PRIVATE_WITH_EGRESS.")
+            rds_subnet_type_enum = ec2.SubnetType.PRIVATE_WITH_EGRESS
+
+        rds_subnet_selection = ec2.SubnetSelection(subnet_type=rds_subnet_type_enum)
+
+        # --- Resolve Security Groups ---
+        db_security_groups = self._resolve_security_groups(resolved_vpc, self.instance_identifier, default_engine_port, construct_id, self.passed_security_group)
+        # --- End Resolve Security Groups ---
+
+        parameter_group = self._resolve_parameter_group(self.instance_identifier, db_engine, engine_type, construct_id)
+        option_group = self._resolve_option_group(self.instance_identifier, db_engine, construct_id)
         storage_type_str = self.config.get("storage_type", "gp3").upper()
         rds_storage_type = getattr(rds.StorageType, storage_type_str, rds.StorageType.GP3)
-        if storage_type_str not in [st.value for st in rds.StorageType]: logger.warning(f"Potentially invalid storage_type: {storage_type_str}.")
+        if storage_type_str not in [st.value.upper() for st in rds.StorageType]: logger.warning(f"Potentially invalid storage_type: {storage_type_str}.")
 
         max_allocated_storage = None
         if self.config.get("enable_storage_autoscaling", False):
             max_allocated_storage = self.config.get("max_allocated_storage_gb")
             if max_allocated_storage is not None and max_allocated_storage <= self.config.get("allocated_storage_gb", 0):
-                logger.warning(f"max_allocated_storage_gb for {instance_identifier} must be > allocated_storage_gb. Disabling autoscaling.")
+                logger.warning(f"max_allocated_storage_gb for {self.instance_identifier} must be > allocated_storage_gb. Disabling autoscaling.")
                 max_allocated_storage = None
 
         monitoring_config = self.config.get("monitoring", {})
-        pi_retention, pi_kms_key = self._parse_performance_insights(monitoring_config, instance_identifier, construct_id)
-        monitoring_interval, monitoring_role = self._parse_enhanced_monitoring(monitoring_config, instance_identifier, construct_id)
-        if monitoring_config.get("enable_devops_guru"): logger.info(f"DevOps Guru requested for {instance_identifier}. Ensure enabled in account.")
+        pi_retention, pi_kms_key = self._parse_performance_insights(monitoring_config, self.instance_identifier, construct_id)
+        monitoring_interval_value, monitoring_role = self._parse_enhanced_monitoring(monitoring_config, self.instance_identifier, construct_id) # Renamed variable to avoid conflict with property name
+        if monitoring_config.get("enable_devops_guru"): logger.info(f"DevOps Guru requested for {self.instance_identifier}. Ensure enabled in account.")
 
         backup_retention = Duration.days(0); preferred_backup_window = None
         if self.config.get("enable_automated_backups", True):
             backup_retention_days_val = self.config.get("backup_retention_days", 7)
-            if backup_retention_days_val > 0: 
-                 backup_retention = Duration.days(backup_retention_days_val)
-                 preferred_backup_window = self.config.get("preferred_backup_window")
-        
+            if backup_retention_days_val > 0:
+                backup_retention = Duration.days(backup_retention_days_val)
+                preferred_backup_window = self.config.get("preferred_backup_window")
+
         replicated_backups = None
         if self.config.get("enable_backup_replication", False) and backup_retention.to_days() > 0 :
             rep_region = self.config.get("replicate_automated_backups_to_region")
             if rep_region:
                 rep_kms_arn = self.config.get("replicated_automated_backups_kms_key_arn")
                 rep_kms_key = kms.Key.from_key_arn(self, f"ReplBackupKmsKey{construct_id.replace('-','')}", rep_kms_arn) if rep_kms_arn else None
-                replicated_backups = [rds.BackupProps(region=rep_region, kms_key=rep_kms_key)]
-            else: logger.warning(f"Backup replication enabled for {instance_identifier} but target region missing.")
-        
+                replicated_backups = [rds.CfnDBInstance.ReplicateAutomatedBackupsToProperty(region=rep_region, kms_key_id=rep_kms_key.key_id if rep_kms_key else None)]
+            else: logger.warning(f"Backup replication enabled for {self.instance_identifier} but target region missing.")
+
         storage_kms_key = None
         if self.config.get("storage_encrypted", True) and self.config.get("enable_custom_kms_encryption", False):
             kms_key_id_for_storage = self.config.get("kms_key_id")
             if kms_key_id_for_storage:
                 try: storage_kms_key = kms.Key.from_key_arn(self, f"DbStorageKmsKey{construct_id.replace('-','')}", kms_key_id_for_storage)
                 except Exception as e: logger.error(f"Failed import storage KMS key {kms_key_id_for_storage}: {e}")
-            else: logger.warning(f"Custom KMS encryption enabled for {instance_identifier} but kms_key_id missing.")
+            else: logger.warning(f"Custom KMS encryption enabled for {self.instance_identifier} but kms_key_id missing.")
 
         final_db_port = self.config.get("port", default_engine_port)
         if final_db_port is None: raise ValueError(f"Port not specified/determinable for {engine_type}")
@@ -117,15 +136,16 @@ class DbInstanceStack(NestedStack):
         instance_props = {
             "engine": db_engine, "credentials": db_credentials,
             "instance_type": ec2.InstanceType(self.config.get("instance_type", "db.t3.micro")),
-            "vpc": resolved_vpc, 
-            "vpc_subnets": rds_subnet_selection, "security_groups": db_security_groups,
-            "instance_identifier": instance_identifier, "database_name": self.config.get("database_name"),
+            "vpc": resolved_vpc,
+            "vpc_subnets": rds_subnet_selection,
+            "security_groups": db_security_groups, # Pass the resolved SG list from _resolve_security_groups
+            "instance_identifier": self.instance_identifier, "database_name": self.config.get("database_name"),
             "allocated_storage": self.config.get("allocated_storage_gb", 20),
             "max_allocated_storage": max_allocated_storage, "storage_type": rds_storage_type,
             "iops": self.config.get("iops") if storage_type_str in ["IO1", "IO2", "GP3"] else None,
             "storage_throughput": self.config.get("storage_throughput") if storage_type_str == "GP3" else None,
-            "port": final_db_port, "multi_az": self.config.get("multi_az_deployment", False),
-            "availability_zone": self.config.get("availability_zone") if not self.config.get("multi_az_deployment", False) and self.config.get("availability_zone") else None,
+            "port": final_db_port, "multi_az": self.config.get("multi_az", False),
+            "availability_zone": self.config.get("availability_zone") if not self.config.get("multi_az", False) and self.config.get("availability_zone") else None,
             "backup_retention": backup_retention, "preferred_backup_window": preferred_backup_window,
             "preferred_maintenance_window": self.config.get("preferred_maintenance_window"),
             "auto_minor_version_upgrade": self.config.get("auto_minor_version_upgrade"),
@@ -137,7 +157,8 @@ class DbInstanceStack(NestedStack):
             "cloudwatch_logs_exports": monitoring_config.get("cloudwatch_logs_exports"),
             "performance_insight_retention": pi_retention,
             "performance_insight_encryption_key": pi_kms_key,
-            "monitoring_interval": monitoring_interval, "monitoring_role": monitoring_role,
+            "monitoring_interval": monitoring_interval_value, # Now using the variable 'monitoring_interval_value' for interval
+            "monitoring_role": monitoring_role, # This is the correct property for the IAM role
             "iam_authentication": self.config.get("iam_database_authentication_enabled", False),
             "storage_encrypted": self.config.get("storage_encrypted", True),
             "kms_key": storage_kms_key,
@@ -146,11 +167,12 @@ class DbInstanceStack(NestedStack):
             "replicate_automated_backups": replicated_backups
         }
         final_instance_props = {k: v for k, v in instance_props.items() if v is not None}
+
         self.db_instance = rds.DatabaseInstance(self, "DatabaseInstanceResource", **final_instance_props)
         logger.info(f"RDS DatabaseInstance resource '{self.db_instance.instance_identifier}' defined.")
         if "tags" in self.config:
             for key, value in self.config["tags"].items(): Tags.of(self.db_instance).add(str(key), str(value))
-        
+
         clean_construct_id = construct_id.replace("-","").replace("_","")
         CfnOutput(self, f"DbInstanceIdentifierOutput{clean_construct_id}", value=self.db_instance.instance_identifier)
         CfnOutput(self, f"DbInstanceEndpointAddressOutput{clean_construct_id}", value=self.db_instance.db_instance_endpoint_address)
@@ -166,8 +188,8 @@ class DbInstanceStack(NestedStack):
             try:
                 return ec2.Vpc.from_lookup(self, f"VpcLookupForRds{safe_suffix}", vpc_id=vpc_id_to_lookup)
             except Exception as e:
-                 logger.error(f"VPC lookup by ID '{vpc_id_to_lookup}' failed for {instance_identifier}: {e}", exc_info=True)
-                 raise ValueError(f"VPC lookup by ID '{vpc_id_to_lookup}' failed for {instance_identifier}.") from e
+                logger.error(f"VPC lookup by ID '{vpc_id_to_lookup}' failed for {instance_identifier}: {e}", exc_info=True)
+                raise ValueError(f"VPC lookup by ID '{vpc_id_to_lookup}' failed for {instance_identifier}.") from e
         else:
             raise ValueError(f"VPC could not be resolved for {instance_identifier}. No IVpc passed and 'lookup_existing_vpc_by_id' not configured in its vpc_config.")
 
@@ -193,11 +215,20 @@ class DbInstanceStack(NestedStack):
             return rds.Credentials.from_secret(generated_secret), secret_resource_for_output
         else: raise ValueError(f"Invalid credentials 'source': {credential_source} for {instance_identifier}.")
 
-    def _resolve_security_groups(self, vpc: ec2.IVpc, instance_identifier: str, default_engine_port: int | None, construct_id_suffix: str) -> list[ec2.ISecurityGroup]:
-        vpc_cfg = self.config.get("vpc_config", {}); sg_config = vpc_cfg.get("security_group_config", {}); sg_source = sg_config.get("source", "CREATE_NEW").upper(); db_sgs = []; safe_suffix = construct_id_suffix.replace("-","").replace("_","")
+    def _resolve_security_groups(self, vpc: ec2.IVpc, instance_identifier: str, default_engine_port: int | None, construct_id_suffix: str, passed_security_group: typing.Optional[ec2.ISecurityGroup]) -> list[ec2.ISecurityGroup]:
+        db_sgs = []
+        vpc_cfg = self.config.get("vpc_config", {}); sg_config = vpc_cfg.get("security_group_config", {}); sg_source = sg_config.get("source", "CREATE_NEW").upper(); safe_suffix = construct_id_suffix.replace("-","").replace("_","")
+
+        if passed_security_group:
+            db_sgs.append(passed_security_group)
+            logger.info(f"Using passed security group '{passed_security_group.security_group_id}' for RDS {instance_identifier}.")
+            return db_sgs
+
         if sg_source == "USE_EXISTING_IDS":
             existing_ids = sg_config.get("existing_ids", [])
-            if not existing_ids: logger.warning(f"SG source USE_EXISTING_IDS for {instance_identifier} but no 'existing_ids'. Creating default."); db_sgs.append(ec2.SecurityGroup(self, f"DefaultDbSg{safe_suffix}", vpc=vpc, description=f"Default SG for {instance_identifier}"))
+            if not existing_ids:
+                logger.warning(f"SG source USE_EXISTING_IDS for {instance_identifier} but no 'existing_ids'. Creating default.")
+                db_sgs.append(ec2.SecurityGroup(self, f"DefaultDbSg{safe_suffix}", vpc=vpc, description=f"Default SG for {instance_identifier}"))
             else:
                 for i, sg_id in enumerate(existing_ids):
                     try: db_sgs.append(ec2.SecurityGroup.from_security_group_id(self, f"ImportedDbSg{i}{safe_suffix}", sg_id))
@@ -210,13 +241,12 @@ class DbInstanceStack(NestedStack):
             for i, source_sg_id in enumerate(new_sg_opts.get("allow_ingress_from_sg_ids", [])):
                 try: source_sg = ec2.SecurityGroup.from_security_group_id(self, f"SourceSgForDb{i}{safe_suffix}", source_sg_id); db_sg.add_ingress_rule(source_sg, ec2.Port.tcp(db_port), f"Allow DB access from SG {source_sg_id}")
                 except Exception as e: logger.error(f"Failed lookup source SG ID '{source_sg_id}': {e}")
-            for i, cidr_ip in enumerate(new_sg_opts.get("allow_ingress_from_cidrs", [])):
-                try: db_sg.add_ingress_rule(ec2.Peer.ipv4(cidr_ip), ec2.Port.tcp(db_port), f"Allow DB access from CIDR {cidr_ip}")
-                except Exception as e: logger.error(f"Invalid CIDR '{cidr_ip}': {e}")
-            if new_sg_opts.get("allow_ingress_from_self", False): db_sg.add_ingress_rule(db_sg, ec2.Port.all_traffic(), "Allow traffic from other members of this SG")
             db_sgs.append(db_sg)
         else: raise ValueError(f"Invalid security_group_config.source: {sg_source} for {instance_identifier}")
-        if not db_sgs: db_sgs.append(ec2.SecurityGroup(self, f"FallbackDefaultDbSg{safe_suffix}", vpc=vpc, description=f"Fallback Default SG for {instance_identifier}"))
+
+        if not db_sgs:
+             db_sgs.append(ec2.SecurityGroup(self, f"FallbackDefaultDbSg{safe_suffix}", vpc=vpc, description=f"Fallback Default SG for {instance_identifier}"))
+
         return db_sgs
 
     def _resolve_parameter_group(self, instance_identifier: str, db_engine: rds.IInstanceEngine, engine_type: str, construct_id_suffix: str) -> rds.IParameterGroup | None:
@@ -229,8 +259,8 @@ class DbInstanceStack(NestedStack):
             create_opts = pg_cfg.get("create_new_options", {}); family = create_opts.get("family")
             if not family: family = self._get_parameter_group_family(engine_type, self.config.get("engine_version"))
             if not family: raise ValueError(f"PG 'family' undetermined for {instance_identifier}")
-            return rds.ParameterGroup(self, f"DbPgCreate{safe_suffix}", engine=db_engine, name=create_opts.get("name_prefix", f"{instance_identifier.lower().replace('_','-')}-pg"), description=create_opts.get("description", f"Custom PG for {instance_identifier}"), parameters=create_opts.get("parameters"))
-        return None 
+            return rds.ParameterGroup(self, f"DbPgCreate{safe_suffix}", engine=db_engine, parameter_group_name=create_opts.get("name_prefix", f"{instance_identifier.lower().replace('_','-')}-pg"), description=create_opts.get("description", f"Custom PG for {instance_identifier}"), parameters=create_opts.get("parameters"))
+        return None
 
     def _resolve_option_group(self, instance_identifier: str, db_engine: rds.IInstanceEngine, construct_id_suffix: str) -> rds.IOptionGroup | None:
         og_cfg = self.config.get("option_group", {}); og_source = og_cfg.get("source", "DEFAULT").upper(); safe_suffix = construct_id_suffix.replace("-","").replace("_","")
@@ -243,13 +273,13 @@ class DbInstanceStack(NestedStack):
             for opt_conf_dict in create_opts.get("configurations", []):
                 try: option_configurations.append(rds.OptionConfiguration(**opt_conf_dict))
                 except Exception as e: logger.error(f"Failed OptionConfiguration from {opt_conf_dict} for {instance_identifier}: {e}")
-            return rds.OptionGroup(self, f"DbOgCreate{safe_suffix}", engine=db_engine, configurations=option_configurations, name=create_opts.get("name_prefix", f"{instance_identifier.lower().replace('_','-')}-og"), description=create_opts.get("description", f"Custom OG for {instance_identifier}"))
+            return rds.OptionGroup(self, f"DbOgCreate{safe_suffix}", engine=db_engine, option_group_name=create_opts.get("name_prefix", f"{instance_identifier.lower().replace('_','-')}-og"), description=create_opts.get("description", f"Custom OG for {instance_identifier}"), configurations=option_configurations)
         return None
 
     def _parse_performance_insights(self, monitoring_config: dict, instance_identifier: str, construct_id_suffix: str) -> tuple[rds.PerformanceInsightRetention | None, kms.IKey | None]:
         pi_kms_key = None; pi_retention = None; safe_suffix = construct_id_suffix.replace("-","").replace("_","")
         if monitoring_config.get("enable_performance_insights", False):
-            pi_retention = rds.PerformanceInsightRetention.DEFAULT 
+            pi_retention = rds.PerformanceInsightRetention.DEFAULT
             kms_key_id = monitoring_config.get("performance_insights_kms_key_id")
             if kms_key_id:
                 try: pi_kms_key = kms.Key.from_key_arn(self, f"PerfInsightsKmsKey{safe_suffix}", kms_key_id)
@@ -266,7 +296,7 @@ class DbInstanceStack(NestedStack):
                 if role_arn:
                     try: role = iam.Role.from_role_arn(self, f"ImportedMonitoringRole{safe_suffix}", role_arn)
                     except Exception as e: logger.error(f"Failed import monitoring role {role_arn}: {e}")
-            else: interval = None 
+            else: interval = None
         return interval, role
 
     def _get_db_instance_engine(self, engine_type: str, rds_config: dict) -> rds.IInstanceEngine:
