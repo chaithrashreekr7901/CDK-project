@@ -10,6 +10,8 @@ def _create_vpc_instance_config(
     transit_gateway_settings: dict, site_to_site_vpn_settings: dict, flow_log_settings: dict
 ) -> dict:
     """Helper function to assemble a complete configuration block for a single VPC instance."""
+    # This helper is becoming less relevant if the VPC config is directly embedded in the list
+    # but it can still be used to structure the 'config' dictionary within each VPC item.
     return {
         "id": instance_id, "deploy": deploy_this_instance, "vpc_core_config": core_settings,
         "subnets_config": subnet_settings, "gateways_config": gateway_settings,
@@ -24,108 +26,136 @@ def get_deployment_configurations() -> dict:
     """Returns the overall deployment configuration for the CDK application."""
     logger.info("DEBUG: Entering get_deployment_configurations() for VPC ONLY deployment.")
 
-    # This VPC will be deployed.
-    vpc1_core = {
-        'manage_vpc':False, # <<< This VPC WILL BE DEPLOYED
-        'creation_mode': 'NEW',
-        'existing_vpc_lookup': {'enabled': False, 'by_id': None, 'by_tags': {}},
-        'name': "PrimaryDevVPC", 'cidr': "10.10.0.0/16", 
-        'dns_options': {'enable_dns_hostnames': True, 'enable_dns_support': True},
-        'tags': {"Component": "Networking", "Environment": "dev-alpha", "CostCenter": "1001"}
-    }
-    vpc1_subnets = {
-        'enabled': True,
-        'availability_zones_config': [ 
-            {'az_name_suffix': 'a',
-             'public': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'PublicAlpha'},
-             'private': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'PrivateAlpha'},
-             'isolated': {'enabled': False, 'cidr_mask': 28, 'count': 1, 'name_prefix': 'IsolatedAlpha'}
-            },
-            {'az_name_suffix': 'b',
-             'public': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'PublicAlpha'},
-             'private': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'PrivateAlpha'},
-             'isolated': {'enabled': False}
-            },
-        ]
-    }
-    vpc1_gateways = { 
-        'internet_gateway': {'enabled': True},
-        'nat_gateways': { 'enabled': True, 'count_per_az': 1 },
-        'egress_only_internet_gateway': {'enabled': False}
-    }
-    vpc1_route_tables = {
-        'enabled': True,
-        'default_routes': { 'public_to_igw': True, 'private_to_nat': True },
-        'categories': {
-            'public': { 'enabled': True, 'count': 1, 'routes': [] },
-            'private': { 'enabled': True, 'count': "PER_AZ_FOR_NAT", 'routes': [] },
-            'isolated': { 'enabled': False, 'count': 1, 'routes': [] }
+    # --- VPC Definitions (Refactored into a list) ---
+    vpc_definitions = [
+        {
+            "id": "DevAlphaVPC", # Logical ID for this VPC instance
+            "enabled": True,    # Set to True to deploy this VPC
+            "config": {
+                'manage_vpc': True,
+                'creation_mode': 'NEW',
+                'existing_vpc_lookup': {'enabled': False, 'by_id': None, 'by_tags': {}},
+                'name': "PrimaryDevVPC", 
+                'cidr': "10.10.0.0/16", 
+                'dns_options': {'enable_dns_hostnames': True, 'enable_dns_support': True},
+                'tags': {"Component": "Networking", "Environment": "dev-alpha", "CostCenter": "1001"},
+                
+                'subnets_config': {
+                    'enabled': True,
+                    'availability_zones_config': [ 
+                        {'az_name_suffix': 'a',
+                         'public': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'PublicAlpha'},
+                         'private': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'PrivateAlpha'},
+                         'isolated': {'enabled': False, 'cidr_mask': 28, 'count': 1, 'name_prefix': 'IsolatedAlpha'}
+                        },
+                        {'az_name_suffix': 'b',
+                         'public': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'PublicAlpha'},
+                         'private': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'PrivateAlpha'},
+                         'isolated': {'enabled': False}
+                        },
+                    ]
+                },
+                'gateways_config': { 
+                    'internet_gateway': {'enabled': True},
+                    'nat_gateways': { 'enabled': True, 'count_per_az': 1 },
+                    'egress_only_internet_gateway': {'enabled': False}
+                },
+                'route_tables_config': {
+                    'enabled': True,
+                    'default_routes': { 'public_to_igw': True, 'private_to_nat': True },
+                    'categories': {
+                        'public': { 'enabled': True, 'count': 1, 'routes': [] },
+                        'private': { 'enabled': True, 'count': "PER_AZ_FOR_NAT", 'routes': [] },
+                        'isolated': { 'enabled': False, 'count': 1, 'routes': [] }
+                    }
+                },
+                'network_acls_config': { 
+                    'enabled': True,
+                    'rules': {
+                        'Public': { 
+                            'enabled': True, 'name_prefix': 'NaclPublicAlpha',
+                            'inbound': [{'rule': 100, 'cidr': '0.0.0.0/0', 'protocol': 'tcp', 'port': 443, 'action': 'allow'},
+                                          {'rule': 110, 'cidr': '0.0.0.0/0', 'protocol': 'tcp', 'port': 80, 'action': 'allow'},
+                                          {'rule': 2000, 'cidr': '0.0.0.0/0', 'protocol': 6, 'from_port': 1024, 'to_port': 65535, 'action': 'allow', 'description': 'Ephemeral TCP out reply'},
+                                          {'rule': 2001, 'cidr': '0.0.0.0/0', 'protocol': 17, 'from_port': 1024, 'to_port': 65535, 'action': 'allow', 'description': 'Ephemeral UDP out reply'}],
+                            'outbound': [{'rule': 100, 'cidr': '0.0.0.0/0', 'protocol': -1, 'action': 'allow'}]
+                        },
+                        'Private': { 
+                            'enabled': True, 'name_prefix': 'NaclPrivateAlpha',
+                            'inbound': [{'rule': 100, 'cidr': "10.10.0.0/16", 'protocol': -1, 'action': 'allow'}],
+                            'outbound': [{'rule': 100, 'cidr': '0.0.0.0/0', 'protocol': -1, 'action': 'allow'}]
+                        },
+                        'Isolated': { 'enabled': False } 
+                    }
+                },
+                'security_groups_config': { 'enabled': True, 'groups': {
+                    'web-sg': {'enabled': True, 'name': 'vpc1-web-sg', 'ingress': [{'peer_cidr': '0.0.0.0/0', 'protocol': 'tcp', 'port': 80}]},
+                    'internal-ssh': {'enabled': True, 'name': 'vpc1-internal-ssh', 'ingress': [{'peer_cidr': "10.10.0.0/16", 'protocol': 'tcp', 'port': 22}]}
+                }},
+                'vpc_peering_config': {'enabled': False}, 
+                'dhcp_options_config': {'enabled': False},
+                'vpc_endpoints_config': {'enabled': False},
+                'client_vpn_config': {'enabled': False},
+                'transit_gateway_config': {'enabled': False},
+                'site_to_site_vpn_config': {'enabled': False},
+                'vpc_flow_logs_config': {'enabled': True, 'destination_type': 'cloud-watch-logs', 'retention_days': 7},
+            }
+        },
+        {
+            "id": "AnalyticsVPC",
+            "enabled": False, # This VPC will NOT be deployed unless explicitly enabled
+            "config": {
+                'manage_vpc': False, 
+                'creation_mode': 'NEW', 
+                'name': "AnalyticsVPC",
+                'cidr': "10.20.0.0/16", 
+                'tags': {"Environment": "analytics"},
+                
+                'subnets_config': { 'enabled': False }, 
+                'gateways_config': {'enabled': False},
+                'route_tables_config': {'enabled': False}, 
+                'network_acls_config': {'enabled': False},
+                'security_groups_config': {'enabled': False}, 
+                'vpc_peering_config': {'enabled': False},
+                'dhcp_options_config': {'enabled': False}, 
+                'vpc_endpoints_config': {'enabled': False},
+                'client_vpn_config': {'enabled': False}, 
+                'transit_gateway_config': {'enabled': False},
+                'site_to_site_vpn_config': {'enabled': False}, 
+                'vpc_flow_logs_config': {'enabled': False},
+            }
+        },
+        {
+            "id": "ProductionVPC",
+            "enabled": False, # Set to True to deploy this VPC
+            "config": {
+                'manage_vpc': False,
+                'creation_mode': 'NEW',
+                'name': "ProductionVPC",
+                'cidr': "10.30.0.0/16",
+                'tags': {"Environment": "production"},
+                'dns_options': {'enable_dns_hostnames': True, 'enable_dns_support': True},
+                'subnets_config': {
+                    'enabled': True,
+                    'availability_zones_config': [ 
+                        {'az_name_suffix': 'a', 'private': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'ProdPrivate'}, 'public': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'ProdPublic'}},
+                        {'az_name_suffix': 'b', 'private': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'ProdPrivate'}, 'public': {'enabled': True, 'cidr_mask': 24, 'count': 1, 'name_prefix': 'ProdPublic'}},
+                    ]
+                },
+                'gateways_config': { 'internet_gateway': {'enabled': True}, 'nat_gateways': { 'enabled': True, 'count_per_az': 1 }},
+                'route_tables_config': { 'enabled': True, 'default_routes': { 'public_to_igw': True, 'private_to_nat': True }},
+                'network_acls_config': { 'enabled': False },
+                'security_groups_config': { 'enabled': False },
+                'vpc_peering_config': {'enabled': False}, 
+                'dhcp_options_config': {'enabled': False}, 
+                'vpc_endpoints_config': {'enabled': False},
+                'client_vpn_config': {'enabled': False}, 
+                'transit_gateway_config': {'enabled': False},
+                'site_to_site_vpn_config': {'enabled': False}, 
+                'vpc_flow_logs_config': {'enabled': False},
+            }
         }
-    }
-    vpc1_network_acls = { 
-        'enabled': True,
-        'rules': {
-            'Public': { 
-                'enabled': True, 'name_prefix': 'NaclPublicAlpha',
-                'inbound': [{'rule': 100, 'cidr': '0.0.0.0/0', 'protocol': 'tcp', 'port': 443, 'action': 'allow'},
-                              {'rule': 110, 'cidr': '0.0.0.0/0', 'protocol': 'tcp', 'port': 80, 'action': 'allow'},
-                              {'rule': 2000, 'cidr': '0.0.0.0/0', 'protocol': 6, 'from_port': 1024, 'to_port': 65535, 'action': 'allow', 'description': 'Ephemeral TCP out reply'},
-                              {'rule': 2001, 'cidr': '0.0.0.0/0', 'protocol': 17, 'from_port': 1024, 'to_port': 65535, 'action': 'allow', 'description': 'Ephemeral UDP out reply'}],
-                'outbound': [{'rule': 100, 'cidr': '0.0.0.0/0', 'protocol': -1, 'action': 'allow'}]
-            },
-            'Private': { 
-                'enabled': True, 'name_prefix': 'NaclPrivateAlpha',
-                'inbound': [{'rule': 100, 'cidr': vpc1_core['cidr'], 'protocol': -1, 'action': 'allow'}], 
-                'outbound': [{'rule': 100, 'cidr': '0.0.0.0/0', 'protocol': -1, 'action': 'allow'}]
-            },
-            'Isolated': { 'enabled': False } 
-        }
-    }
-    vpc1_security_groups = { 'enabled': True, 'groups': {
-        'web-sg': {'enabled': True, 'name': 'vpc1-web-sg', 'ingress': [{'peer_cidr': '0.0.0.0/0', 'protocol': 'tcp', 'port': 80}]},
-        'internal-ssh': {'enabled': True, 'name': 'vpc1-internal-ssh', 'ingress': [{'peer_cidr': vpc1_core['cidr'], 'protocol': 'tcp', 'port': 22}]}
-    }}
-    vpc1_peering_internal = {'enabled': False} # This is for internal VPC features, not inter-VPC peering
-    vpc1_dhcp_options = {'enabled': False}
-    vpc1_endpoints = {'enabled': False}
-    vpc1_client_vpn = {'enabled': False}
-    vpc1_transit_gateway = {'enabled': False}
-    vpc1_site_to_site_vpn = {'enabled': False}
-    vpc1_flow_logs = {'enabled': True, 'destination_type': 'cloud-watch-logs', 'retention_days': 7}
-
-    vpc_instance_1_config = _create_vpc_instance_config(
-        instance_id="DevAlphaVPC", # This is the CDK construct ID suffix for the VpcInstanceNestedStack
-        deploy_this_instance=vpc1_core.get('manage_vpc', False), # This flag controls if this specific instance stack is created
-        core_settings=vpc1_core, subnet_settings=vpc1_subnets, gateway_settings=vpc1_gateways,
-        route_table_settings=vpc1_route_tables, nacl_settings=vpc1_network_acls,
-        security_group_settings=vpc1_security_groups, peering_settings=vpc1_peering_internal,
-        dhcp_options_settings=vpc1_dhcp_options, endpoint_settings=vpc1_endpoints,
-        client_vpn_settings=vpc1_client_vpn, transit_gateway_settings=vpc1_transit_gateway,
-        site_to_site_vpn_settings=vpc1_site_to_site_vpn, flow_log_settings=vpc1_flow_logs
-    )
-    
-    # --- Configuration for VPC Instance 2: AnalyticsVPC ---.
-    vpc2_core = {
-        'manage_vpc': False, # <<< This VPC WILL NOT BE DEPLOYED
-        'creation_mode': 'NEW', 
-        'name': "AnalyticsVPC",
-        'cidr': "10.20.0.0/16", # Ensure this is unique if deploying multiple new VPCs
-        'tags': {"Environment": "analytics"}
-    }
-    vpc2_subnets = { 'enabled': False } # Minimal config as it won't be deployed
-    # ... (other vpc2 configs can be minimal or set to enabled: False) ...
-    vpc_instance_2_config = _create_vpc_instance_config(
-        instance_id="AnalyticsVPC",
-        deploy_this_instance=vpc2_core.get('manage_vpc', False),
-        core_settings=vpc2_core, 
-        subnet_settings=vpc2_subnets, 
-        gateway_settings={'enabled': False}, route_table_settings={'enabled': False}, 
-        nacl_settings={'enabled': False}, security_group_settings={'enabled': False}, 
-        peering_settings={'enabled': False}, dhcp_options_settings={'enabled': False}, 
-        endpoint_settings={'enabled': False}, client_vpn_settings={'enabled': False}, 
-        transit_gateway_settings={'enabled': False}, site_to_site_vpn_settings={'enabled': False}, 
-        flow_log_settings={'enabled': False}
-    )
+    ]
     
     
     
@@ -1413,7 +1443,7 @@ def get_deployment_configurations() -> dict:
                                 "timeout_seconds": 30,  # INTEGER (Optional): Default: 5 (instance/ip), 30 (Lambda). Range: 2-120. Must be less than interval.
                                 "healthy_threshold_count": 2,   # INTEGER (Optional): Default: 3 (instance/ip), 2 (Lambda). Range: 2-10.
                                 "unhealthy_threshold_count": 2, # INTEGER (Optional): Default: 3 (instance/ip), 2 (Lambda). Range: 2-10.
-                                "matcher_http_codes": "200" # STRING (Optional): Default: "200". For HTTP/HTTPS. Comma-separated or range (e.g., "200,202", "200-299").
+                                "matcher_http_codes": "404" # STRING (Optional): Default: "200". For HTTP/HTTPS. Comma-separated or range (e.g., "200,202", "200-299").
                             },
                             "deregistration_delay_seconds": 60, # INTEGER (Optional): Default: 300. Time to wait for in-flight requests to complete on deregistering targets. Range: 0-3600.
                             
@@ -1772,9 +1802,9 @@ def get_deployment_configurations() -> dict:
                     # "launch_configuration_name": "my-legacy-launch-config", # STRING (Optional, Legacy): Name of an existing Launch Configuration. Not recommended for new ASGs.
 
                     # --- Capacity Settings ---
-                    "min_capacity": 1,          # INTEGER (Required): Minimum number of instances in the ASG.
+                    "min_capacity": 2,          # INTEGER (Required): Minimum number of instances in the ASG.
                     "max_capacity": 5,          # INTEGER (Required): Maximum number of instances in the ASG.
-                    "desired_capacity": 2,      # INTEGER (Optional): Desired number of instances. If omitted, defaults to 'min_capacity'.
+                    "desired_capacity": 3,      # INTEGER (Optional): Desired number of instances. If omitted, defaults to 'min_capacity'.
                                                 # Note: If using mixed instances with weighted capacity, desired_capacity refers to units.
 
                     # --- Health Check ---
@@ -2001,6 +2031,12 @@ def get_deployment_configurations() -> dict:
                  #    "commands_post_build": ["echo 'Build complete'"],
                   #  "artifacts_paths": ["dist/**/*", "appspec.yml", "scripts/**/*"], # Paths to artifacts to be passed to deploy
                 },
+                "approval_config": {
+                    "enabled": True, # Set to True to enable the approval stage
+                    "stage_name": "ApproveDeployment", # Name for the approval stage in CodePipeline
+                    "notification_sns_topic_arn": None, # Optional: ARN of an SNS topic to send notifications to (e.g., "arn:aws:sns:REGION:ACCOUNT:MyApprovalTopic")
+                    "custom_data": "Review application build artifacts and readiness before deployment to production." # Optional: Custom message for approval
+                },
                 "deploy_config": {
                     "enabled": True,
                     "deployment_strategy": "CODE_DEPLOY_EC2", # "CODE_DEPLOY_EC2", "SSM_RUN_COMMAND", "S3_SYNC"
@@ -2042,21 +2078,20 @@ def get_deployment_configurations() -> dict:
 
     final_config = {
         "vpcs": {
-            "deploy": False, # Example: VPCs are globally enabled
+            "deploy": True, # Keep this as True if you want VPCs to be deployed
             "description": "Configuration group for all VPC instance deployments.",
-            "instances": [vpc_instance_1_config, vpc_instance_2_config] # Assuming these are defined
+            "instances": vpc_definitions # <--- CRUCIAL FIX: Point 'instances' to your new list 'vpc_definitions'
         },
         "vpc_peerings": {
             "deploy": False, # Example: Peering globally disabled
             "description": "Configuration group for all VPC peering connections.",
-            "connections": vpc_peering_definitions # Assuming this is defined
+            "connections": vpc_peering_definitions # This will use the vpc_peering_definitions list defined above
         },
-        "rds_deployments": rds_deployments_config, # Assuming this is defined
-        "s3_deployments": s3_deployments_config,   # Assuming this is defined
-        "ec2_deployments": ec2_deployments_config,  # <<< Include the EC2 config
+        "rds_deployments": rds_deployments_config,
+        "s3_deployments": s3_deployments_config,   
+        "ec2_deployments": ec2_deployments_config,  
         "iam_roles": iam_roles_config,
         "pipeline_deployments": pipeline_deployments_config,
     }
     logger.info(f"DEBUG: Keys in final_config: {list(final_config.keys()) if isinstance(final_config, dict) else 'Not a dict'}")
     return final_config
-    

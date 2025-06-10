@@ -1,3 +1,5 @@
+# cdk_project/pipeline/individual_app_pipeline_nested_stack.py
+
 import os
 import typing
 import logging
@@ -15,6 +17,7 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_ec2 as ec2,
     aws_autoscaling as autoscaling,
+    aws_sns as sns, # Import sns module for notifications
     CfnOutput,
     Fn
 )
@@ -148,7 +151,7 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                     build_image=codebuild.LinuxBuildImage.from_aws_managed_image_id(build_config["build_image"])
                     if "arn:aws:codebuild" in build_config["build_image"] else
                     codebuild.LinuxBuildImage.from_code_build_image_id(build_config["build_image"]),
-                    compute_type=codebuild.ComputeType[build_config["build_compute_type"].split('_')[-1]],
+                    compute_type=codebuild.ComputeType[build_config["build_compute_type"].split('_')[-1]], # e.g., SMALL, MEDIUM, LARGE
 
                     environment_variables=env_vars
                 ),
@@ -162,6 +165,35 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                 action_name="CodeBuild"
             )
 
+        # --- Approval Stage (New) ---
+        approval_config = pipeline_config.get("approval_config", {})
+        approval_action = None
+
+        if approval_config.get("enabled", False):
+            notification_topic = None
+            if approval_config.get("notification_sns_topic_arn"):
+                try:
+                    notification_topic = sns.Topic.from_topic_arn(
+                        self,
+                        f"{pipeline_id}ApprovalSNSTopic",
+                        approval_config["notification_sns_topic_arn"]
+                    )
+                    logger.info(f"Pipeline '{pipeline_id}': Using SNS topic for approval notifications: {notification_topic.topic_arn}")
+                except Exception as e:
+                    logger.warning(f"Pipeline '{pipeline_id}': Failed to import SNS topic '{approval_config['notification_sns_topic_arn']}': {e}")
+
+            approval_action = codepipeline_actions.ManualApprovalAction(
+                action_name=approval_config.get("stage_name", "ApproveDeployment"),
+                # The 'external_entity' property is deprecated and no longer needed for ManualApprovalAction
+                # external_entity=True, 
+                notification_topic=notification_topic,
+                additional_information=approval_config.get("custom_data"),
+            )
+            logger.info(f"Pipeline '{pipeline_id}': Approval stage '{approval_config.get('stage_name', 'ApproveDeployment')}' enabled.")
+        else:
+            logger.info(f"Pipeline '{pipeline_id}': Approval stage is disabled.")
+
+
         # --- Deploy Stage ---
         deploy_config = pipeline_config.get("deploy_config", {})
         deploy_action = None
@@ -172,11 +204,15 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
 
             codedeploy_role_ref_id = deploy_config.get("codedeploy_service_role_ref_id")
             if codedeploy_role_ref_id:
-                codedeploy_role_arn = created_iam_roles_map.get(codedeploy_role_ref_id) # This map contains ARNs
+                # The 'created_iam_roles_map' from ApplicationPipelinesGroupNestedStack contains ARNs (strings),
+                # so codedeploy_role_arn will be a string.
+                codedeploy_role_arn = created_iam_roles_map.get(codedeploy_role_ref_id)
                 if not codedeploy_role_arn:
                     logger.error(f"Pipeline '{pipeline_id}': CodeDeploy service role ARN with ref_id '{codedeploy_role_ref_id}' not found in created_iam_roles_map.")
                     raise ValueError(f"CodeDeploy service role ARN '{codedeploy_role_ref_id}' not resolved for pipeline '{pipeline_id}'")
                 
+                # Directly use from_role_arn, as we expect it to be a string ARN token.
+                # REMOVED: The problematic 'if isinstance(codedeploy_role_arn_or_object, iam.IRole):' check.
                 codedeploy_service_role = iam.Role.from_role_arn(
                     self,
                     f"{pipeline_id}{codedeploy_role_ref_id}Import",
@@ -445,7 +481,19 @@ class IndividualApplicationPipelineNestedStack(NestedStack):
                 stage_name="Build",
                 actions=[build_action]
             )
+        
+        # Add Approval Stage
+        if approval_action:
+            application_pipeline.add_stage(
+                stage_name=approval_config.get("stage_name", "ApproveDeployment"),
+                actions=[approval_action]
+            )
 
+        # The input for the deploy stage should be the output of the previous stage.
+        # If approval_action exists, its input is app_build_output (or app_source_output).
+        # The deploy_action's input logic needs to consider the approval stage's presence.
+        # The current 'input=app_build_output if build_action else app_source_output' is correct
+        # as CodePipeline automatically passes artifacts through stages.
         if deploy_action:
             application_pipeline.add_stage(
                 stage_name="Deploy",

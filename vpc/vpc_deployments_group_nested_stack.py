@@ -1,4 +1,4 @@
-# CRMP-PROJECT/cdk_project/vpc/vpc_deployments_group_nested_stack.py
+# cdk_project/vpc/vpc_deployments_group_nested_stack.py
 import logging
 from aws_cdk import (
     NestedStack,
@@ -36,8 +36,10 @@ class VpcDeploymentsGroupNestedStack(NestedStack):
                 logger.error(f"Invalid VPC definition block: {vpc_definition_block}. Skipping.")
                 continue
 
-            # Use the 'deploy' flag from the individual VPC definition block
-            deploy_this_vpc = vpc_definition_block.get("deploy", False) 
+            # --- CRITICAL FIX 1: Use 'enabled' flag from config ---
+            deploy_this_vpc = vpc_definition_block.get("enabled", False) # <--- CHANGED THIS LINE
+            # --- END CRITICAL FIX 1 ---
+
             vpc_config_id = vpc_definition_block.get("id") 
 
             if not vpc_config_id:
@@ -47,7 +49,8 @@ class VpcDeploymentsGroupNestedStack(NestedStack):
             if deploy_this_vpc:
                 # Construct a unique CDK ID for the VpcInstanceNestedStack
                 nested_stack_cdk_id = f"{vpc_config_id}InstanceNestedStack"
-                vpc_name_for_desc = vpc_definition_block.get("vpc_core_config",{}).get('name', vpc_config_id)
+                # Access 'name' from the nested 'config' dict
+                vpc_name_for_desc = vpc_definition_block.get("config",{}).get('vpc_core_config',{}).get('name', vpc_config_id)
                 
                 logger.info(f"VpcDeploymentsGroup: Defining VpcInstanceNestedStack for VPC '{vpc_config_id}' (Name: {vpc_name_for_desc}) with CDK ID '{nested_stack_cdk_id}'.")
                 
@@ -61,14 +64,16 @@ class VpcDeploymentsGroupNestedStack(NestedStack):
                     )
                     Tags.of(instance_stack).add("VPCConfigID", vpc_config_id)
 
-                    # Store the IVpc object from the instance stack
-                    if hasattr(instance_stack, 'vpc') and instance_stack.vpc:
-                        self.created_vpcs_map[vpc_config_id] = instance_stack.vpc
+                    # --- CRITICAL FIX 2: Use 'public_vpc' attribute ---
+                    if hasattr(instance_stack, 'public_vpc') and instance_stack.public_vpc:
+                        self.created_vpcs_map[vpc_config_id] = instance_stack.public_vpc
                         logger.info(f"VpcDeploymentsGroup: Stored IVpc for '{vpc_config_id}'.")
                     else:
-                        logger.error(f"VpcInstanceNestedStack for '{vpc_config_id}' did not expose a 'vpc' attribute.")
+                        logger.error(f"VpcInstanceNestedStack for '{vpc_config_id}' did not expose a 'public_vpc' attribute.")
+                    # --- END CRITICAL FIX 2 ---
 
                 except Exception as e:
                     logger.error(f"VpcDeploymentsGroup: Failed to instantiate VpcInstanceNestedStack for '{vpc_config_id}': {e}", exc_info=True)
             else:
-                logger.info(f"VpcDeploymentsGroup: Skipping VPC definition '{vpc_config_id}' (deploy: false).")
+                # Updated log message for clarity, reflects the 'enabled' flag
+                logger.info(f"VpcDeploymentsGroup: Skipping VPC definition '{vpc_config_id}' (enabled: false).")
