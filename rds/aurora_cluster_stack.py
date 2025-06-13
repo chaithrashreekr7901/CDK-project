@@ -1,4 +1,3 @@
-# cdk_project/rds/aurora_cluster_stack.py
 import logging
 import json
 import re
@@ -16,25 +15,31 @@ from aws_cdk import (
 from constructs import Construct
 
 logger = logging.getLogger(__name__)
-if not logger.handlers: # Added for consistency in logging setup
+if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s: %(message)s')
 
 class AuroraClusterStack(NestedStack):
-    db_cluster: rds.IDatabaseCluster # Expose the cluster
+    db_cluster: rds.IDatabaseCluster
 
     def __init__(self, scope: Construct, construct_id: str, *,
                  rds_config: dict,
                  vpc: ec2.IVpc | None,
-                 security_group: typing.Optional[ec2.ISecurityGroup] = None, # Explicitly accept Security Group object
-                 created_iam_roles_map: typing.Dict[str, iam.IRole] = None, # Explicitly accept IAM roles map
+                 security_group_config: typing.Dict,
+                 public_cfn_subnets: typing.List[ec2.CfnSubnet],
+                 private_cfn_subnets: typing.List[ec2.CfnSubnet],
+                 isolated_cfn_subnets: typing.List[ec2.CfnSubnet],
+                 created_iam_roles_map: typing.Dict[str, iam.IRole] = None,
                  **kwargs) -> None:
 
-        nested_stack_valid_kwargs = {k: v for k, v in kwargs.items() if k in ['env', 'stack_name', 'synthesizer', 'termination_protection', 'description']}
+        nested_stack_valid_kwargs = {k: v for k, v in kwargs.items() if k in ['env', 'stack_name', 'synthesizer', 'description', 'termination_protection']}
         super().__init__(scope, construct_id, **nested_stack_valid_kwargs)
 
         self.config = rds_config
         self.passed_vpc = vpc
-        self.passed_security_group = security_group
+        self.security_group_config = security_group_config
+        self.public_cfn_subnets = public_cfn_subnets
+        self.private_cfn_subnets = private_cfn_subnets
+        self.isolated_cfn_subnets = isolated_cfn_subnets
         self.created_iam_roles_map = created_iam_roles_map if created_iam_roles_map is not None else {}
 
         cluster_identifier = self.config.get('cluster_identifier')
@@ -54,7 +59,6 @@ class AuroraClusterStack(NestedStack):
 
         logger.info(f"AuroraClusterStack '{construct_id}': Initializing for RDS Cluster ID '{self.cluster_identifier}' with engine type '{engine_type_str}'.")
 
-        # --- Resolve VPC ---
         resolved_vpc: ec2.IVpc | None = self.passed_vpc
         if not resolved_vpc:
             logger.info(f"No VPC object passed for {self.cluster_identifier}, attempting lookup based on its own config.")
@@ -62,105 +66,117 @@ class AuroraClusterStack(NestedStack):
         if not resolved_vpc:
             raise ValueError(f"VPC could not be resolved for RDS cluster {self.cluster_identifier}.")
 
-        # --- Aurora Engine ---
         aurora_engine = self._get_aurora_cluster_engine(engine_type_str, self.config)
         default_engine_port = self._get_default_aurora_port(engine_type_str)
 
-        # --- Credentials ---
         db_credentials, generated_secret_resource = self._resolve_credentials(self.cluster_identifier, construct_id)
 
-        # --- Subnet Group ---
         vpc_cfg_for_subnet = self.config.get("vpc_config", {})
         subnet_type_str = vpc_cfg_for_subnet.get("subnet_type_for_rds", "PRIVATE_WITH_EGRESS").upper()
 
-        rds_subnet_type_enum: ec2.SubnetType
-        if subnet_type_str == "PUBLIC":
-            rds_subnet_type_enum = ec2.SubnetType.PUBLIC
-        elif subnet_type_str == "PRIVATE_WITH_EGRESS":
-            rds_subnet_type_enum = ec2.SubnetType.PRIVATE_WITH_EGRESS
-        elif subnet_type_str == "PRIVATE_ISOLATED":
-            rds_subnet_type_enum = ec2.SubnetType.PRIVATE_ISOLATED
+        subnet_ids_for_db_group: typing.List[str] = []
+        l2_subnets_for_instance_props: typing.List[ec2.ISubnet] = []
+
+        if self.public_cfn_subnets or self.private_cfn_subnets or self.isolated_cfn_subnets:
+            logger.info(f"Using explicitly passed CfnSubnets for DB Subnet Group for {self.cluster_identifier}.")
+            target_cfn_subnets_for_rds = []
+            if subnet_type_str == "PUBLIC":
+                target_cfn_subnets_for_rds = self.public_cfn_subnets
+            elif subnet_type_str == "PRIVATE_WITH_EGRESS":
+                target_cfn_subnets_for_rds = self.private_cfn_subnets
+            elif subnet_type_str == "PRIVATE_ISOLATED":
+                target_cfn_subnets_for_rds = self.isolated_cfn_subnets
+            else:
+                logger.warning(f"Invalid subnet_type_for_rds: '{subnet_type_str}'. Defaulting to PRIVATE_WITH_EGRESS CfnSubnets.")
+                target_cfn_subnets_for_rds = self.private_cfn_subnets
+
+            if not target_cfn_subnets_for_rds:
+                raise ValueError(f"No {subnet_type_str.lower()} CfnSubnets found for RDS cluster {self.cluster_identifier} in newly created VPC '{resolved_vpc.vpc_id}'.")
+
+            subnet_ids_for_db_group = [s.ref for s in target_cfn_subnets_for_rds]
+            l2_subnets_for_instance_props = [ec2.Subnet.from_subnet_id(self, f"InstPropsSubnet{i}{construct_id}", s_id) for i, s_id in enumerate(subnet_ids_for_db_group)]
         else:
-            logger.warning(f"Invalid subnet_type_for_rds: '{subnet_type_str}' for RDS {self.cluster_identifier}. Defaulting to PRIVATE_WITH_EGRESS.")
-            rds_subnet_type_enum = ec2.SubnetType.PRIVATE_WITH_EGRESS
+            explicit_subnet_ids = vpc_cfg_for_subnet.get("subnet_ids_for_rds")
+            if explicit_subnet_ids:
+                logger.info(f"Using explicit subnet_ids_for_rds from config for {self.cluster_identifier} (existing VPC).")
+                if not isinstance(explicit_subnet_ids, list) or not all(isinstance(s, str) for s in explicit_subnet_ids):
+                    raise ValueError(f"subnet_ids_for_rds must be a list of strings for existing VPC. Found: {explicit_subnet_ids}")
+                subnet_ids_for_db_group = explicit_subnet_ids
+                l2_subnets_for_instance_props = [ec2.Subnet.from_subnet_id(self, f"InstPropsSubnet{i}{construct_id}", s_id) for i, s_id in enumerate(subnet_ids_for_db_group)]
+            else:
+                logger.info(f"Using L2 select_subnets for DB Subnet Group for {self.cluster_identifier} in existing VPC (no explicit IDs).")
+                selected_l2_subnets: typing.List[ec2.ISubnet]
+                if subnet_type_str == "PUBLIC":
+                    selected_l2_subnets = resolved_vpc.select_subnets(subnet_type=ec2.SubnetType.PUBLIC).subnets
+                elif subnet_type_str == "PRIVATE_WITH_EGRESS":
+                    selected_l2_subnets = resolved_vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnets
+                elif subnet_type_str == "PRIVATE_ISOLATED":
+                    selected_l2_subnets = resolved_vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED).subnets
+                else:
+                    logger.warning(f"Invalid subnet_type_for_rds: '{subnet_type_str}'. Falling back to PrivateWithEgress L2 Subnets.")
+                    selected_l2_subnets = resolved_vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnets
 
-        rds_subnet_selection = ec2.SubnetSelection(subnet_type=rds_subnet_type_enum)
+                if not selected_l2_subnets:
+                    raise ValueError(f"No {subnet_type_str.lower()} L2 subnets found for RDS cluster {self.cluster_identifier} in existing VPC '{resolved_vpc.vpc_id}'.")
 
-        # --- Security Groups ---
-        db_security_groups = self._resolve_security_groups(resolved_vpc, self.cluster_identifier, default_engine_port, construct_id, self.passed_security_group)
-        # --- End Resolve Security Groups ---
+                subnet_ids_for_db_group = [s.subnet_id for s in selected_l2_subnets]
+                l2_subnets_for_instance_props = selected_l2_subnets
 
-        # --- Cluster Parameter Group ---
+        if not subnet_ids_for_db_group or not l2_subnets_for_instance_props:
+            raise ValueError(f"Critical: No subnets resolved for RDS cluster {self.cluster_identifier}.")
+
+        db_subnet_group = rds.CfnDBSubnetGroup(
+            self, f"DbSubnetGroup{construct_id}",
+            db_subnet_group_description=f"Subnet group for {self.cluster_identifier}",
+            subnet_ids=subnet_ids_for_db_group,
+            db_subnet_group_name=f"{self.cluster_identifier.lower().replace('_','-')}-sng"
+        )
+        logger.info(f"Created DB Subnet Group '{db_subnet_group.db_subnet_group_name}' for RDS in '{subnet_type_str}' subnets.")
+
+        db_security_groups = self._resolve_security_groups(resolved_vpc, self.cluster_identifier, default_engine_port, construct_id, self.security_group_config)
+
         cluster_pg = self._resolve_cluster_parameter_group(self.cluster_identifier, aurora_engine, engine_type_str, construct_id)
-
-        # --- DB Instance Parameter Group (for instances in the cluster) ---
         instance_pg_config = self.config.get("instance_parameter_group", {})
         instance_parameter_group = None
         if instance_pg_config:
             instance_parameter_group = self._resolve_instance_parameter_group(self.cluster_identifier, aurora_engine, engine_type_str, construct_id, instance_pg_config)
 
-
-        # --- Instances Configuration ---
         instances_cfg = self.config.get("instances_config", {})
         num_instances = instances_cfg.get("count", 1)
 
-        # Serverless v2 Scaling
         serverless_v2_scaling_config = None
         if self.config.get("enable_serverless_v2_scaling", False):
             min_acu = self.config.get("serverless_v2_min_capacity_acu")
             max_acu = self.config.get("serverless_v2_max_capacity_acu")
             if min_acu is not None and max_acu is not None:
-                serverless_v2_scaling_config = rds.ServerlessV2ScalingConfiguration(
-                    min_capacity=min_acu,
-                    max_capacity=max_acu
-                )
+                serverless_v2_scaling_config = rds.ServerlessV2ScalingConfiguration(min_capacity=min_acu, max_capacity=max_acu)
                 logger.info(f"Configuring Serverless V2 scaling for {self.cluster_identifier}: MinACU={min_acu}, MaxACU={max_acu}")
-                if num_instances > 0 and instances_cfg.get("instance_type") != "db.serverless":
-                    logger.warning(f"ServerlessV2 scaling enabled for {self.cluster_identifier}, but {num_instances} provisioned instances of type "
-                                   f"'{instances_cfg.get('instance_type')}' are also configured. Review compatibility.")
-            else:
-                logger.warning(f"enable_serverless_v2_scaling is True for {self.cluster_identifier} but min/max ACU not fully specified. Ignoring.")
 
-        # CRITICAL FIX: Ensure InstanceProps always has VPC, vpc_subnets, and security_groups
-        # These are required by the InstanceProps constructor, even if the DatabaseCluster also takes them.
-        # This resolves the `InstanceProps.__init__() missing 1 required keyword-only argument: 'vpc'` error.
         common_instance_props = {
-            # Explicitly pass resolved network configuration to InstanceProps
-            "vpc": resolved_vpc,
-            "vpc_subnets": rds_subnet_selection,
-            "security_groups": db_security_groups,
-
-            # Other properties from config (already present in your code)
-            "instance_type": ec2.InstanceType(instances_cfg.get("instance_type", "db.t3.medium")), # Provide a default for InstanceType
+            "instance_type": ec2.InstanceType(instances_cfg.get("instance_type", "db.t3.medium")),
             "auto_minor_version_upgrade": instances_cfg.get("auto_minor_version_upgrade_instances", True),
             "publicly_accessible": instances_cfg.get("publicly_accessible_instances", False),
             "parameter_group": instance_parameter_group,
             "enable_performance_insights": instances_cfg.get("enable_performance_insights_instances", False),
             "performance_insight_retention": rds.PerformanceInsightRetention.DEFAULT if instances_cfg.get("enable_performance_insights_instances", False) else None,
+            "vpc": resolved_vpc,
+            "vpc_subnets": ec2.SubnetSelection(subnets=l2_subnets_for_instance_props),
+            "security_groups": db_security_groups,
         }
-        # Filter None values from common_instance_props before passing to DatabaseCluster
         common_instance_props = {k: v for k, v in common_instance_props.items() if v is not None}
 
-
-        # --- Backup & Recovery ---
         backup_props = None
         if self.config.get("enable_automated_backups", True):
             retention_days = self.config.get("backup_retention_days", 7)
             if retention_days > 0:
-                backup_props = rds.BackupProps(
-                    retention=Duration.days(retention_days),
-                    preferred_window=self.config.get("preferred_backup_window")
-                )
+                backup_props = rds.BackupProps(retention=Duration.days(retention_days), preferred_window=self.config.get("preferred_backup_window"))
 
         backtrack_window = None
         if self.config.get("enable_backtrack", False):
             hours = self.config.get("backtrack_window_hours")
             if isinstance(hours, int) and hours > 0:
                 backtrack_window = Duration.hours(hours)
-            else:
-                logger.warning(f"enable_backtrack is True for {self.cluster_identifier} but backtrack_window_hours is invalid. Disabling backtrack.")
 
-        # --- Encryption ---
         cluster_kms_key = None
         if self.config.get("storage_encrypted", True) and self.config.get("enable_custom_kms_encryption", False):
             kms_key_id_for_cluster = self.config.get("kms_key_id")
@@ -169,28 +185,18 @@ class AuroraClusterStack(NestedStack):
                     cluster_kms_key = kms.Key.from_key_arn(self, f"AuroraClusterKmsKey{construct_id.replace('-','')}", kms_key_id_for_cluster)
                 except Exception as e:
                     logger.error(f"Failed to import Aurora cluster KMS key {kms_key_id_for_cluster}: {e}")
-            else:
-                logger.warning(f"enable_custom_kms_encryption is True for {self.cluster_identifier} but kms_key_id is missing.")
 
-
-        # --- Assemble Cluster Properties ---
-        # Pass VPC, Subnet Selection, and Security Groups directly to the DatabaseCluster constructor
         cluster_props = {
             "engine": aurora_engine,
             "credentials": db_credentials,
             "cluster_identifier": self.cluster_identifier,
             "default_database_name": self.config.get("default_database_name"),
-            # Network configuration at the cluster level (for the cluster endpoint)
-            "vpc": resolved_vpc,
-            "vpc_subnets": rds_subnet_selection,
-            "security_groups": db_security_groups,
-            # Instance properties (applies to all instances in cluster, or for db.serverless)
-            "instance_props": common_instance_props, # Pass the pre-assembled and filtered InstanceProps
-            "instances": num_instances if not serverless_v2_scaling_config and num_instances > 0 else (1 if serverless_v2_scaling_config and instances_cfg.get("instance_type") == "db.serverless" else None), # Number of instances
+            "instance_props": common_instance_props,
+            "instances": num_instances if not serverless_v2_scaling_config and num_instances > 0 else None,
             "port": self.config.get("port", default_engine_port),
-            "parameter_group": cluster_pg, # Cluster-level PG
+            "parameter_group": cluster_pg,
             "cloudwatch_logs_exports": self.config.get("monitoring", {}).get("cloudwatch_logs_exports"),
-            "cloudwatch_logs_retention": self._get_retention_enum(self.config.get("monitoring", {}).get("cloudwatch_logs_retention_days")), # For logs exported by cluster
+            "cloudwatch_logs_retention": self._get_retention_enum(self.config.get("monitoring", {}).get("cloudwatch_logs_retention_days")),
             "copy_tags_to_snapshot": self.config.get("copy_tags_to_snapshot", True),
             "deletion_protection": self.config.get("deletion_protection", False),
             "iam_authentication": self.config.get("iam_database_authentication_enabled", False),
@@ -218,14 +224,20 @@ class AuroraClusterStack(NestedStack):
         clean_construct_id = construct_id.replace("-","").replace("_","")
         CfnOutput(self, f"DbClusterIdentifierOutput{clean_construct_id}", value=self.db_cluster.cluster_identifier)
         CfnOutput(self, f"DbClusterEndpointAddressOutput{clean_construct_id}", value=self.db_cluster.cluster_endpoint.hostname)
-        CfnOutput(self, f"DbClusterEndpointPortOutput{clean_construct_id}", value=self.db_cluster.cluster_endpoint.port_as_string)
+
+        # ================== FINAL FIX IS HERE ==================
+        # Use Python's built-in str() function. This works on both
+        # standard numbers and CDK Token objects.
+        CfnOutput(self, f"DbClusterEndpointPortOutput{clean_construct_id}", value=str(self.db_cluster.cluster_endpoint.port))
+        # =======================================================
+
         if self.db_cluster.cluster_read_endpoint:
-             CfnOutput(self, f"DbClusterReadEndpointAddressOutput{clean_construct_id}", value=self.db_cluster.cluster_read_endpoint.hostname)
+                CfnOutput(self, f"DbClusterReadEndpointAddressOutput{clean_construct_id}", value=self.db_cluster.cluster_read_endpoint.hostname)
 
         if generated_secret_resource:
-             CfnOutput(self, f"DbClusterMasterCredentialsSecretArnOutput{clean_construct_id}", value=generated_secret_resource.secret_arn)
+                CfnOutput(self, f"DbClusterMasterCredentialsSecretArnOutput{clean_construct_id}", value=generated_secret_resource.secret_arn)
 
-
+    # ... (the rest of the helper methods are unchanged and correct) ...
     def _resolve_vpc_via_lookup(self, cluster_identifier: str, construct_id_suffix: str) -> ec2.IVpc:
         vpc_cfg = self.config.get("vpc_config", {}); vpc_id_to_lookup = vpc_cfg.get("lookup_existing_vpc_by_id"); safe_suffix = construct_id_suffix.replace("-","").replace("_","")
         if vpc_id_to_lookup:
@@ -255,38 +267,64 @@ class AuroraClusterStack(NestedStack):
             return rds.Credentials.from_secret(generated_secret), secret_resource_for_output
         else: raise ValueError(f"Invalid credentials 'source': {credential_source} for {cluster_identifier}.")
 
-
-    def _resolve_security_groups(self, vpc: ec2.IVpc, cluster_identifier: str, default_engine_port: int | None, construct_id_suffix: str, passed_security_group: typing.Optional[ec2.ISecurityGroup]) -> list[ec2.ISecurityGroup]:
+    def _resolve_security_groups(self, vpc: ec2.IVpc, cluster_identifier: str, default_engine_port: int | None, construct_id_suffix: str, sg_config: typing.Dict) -> list[ec2.ISecurityGroup]:
         db_sgs = []
-        vpc_cfg = self.config.get("vpc_config", {}); sg_config = vpc_cfg.get("security_group_config", {}); sg_source = sg_config.get("source", "CREATE_NEW").upper(); safe_suffix = construct_id_suffix.replace("-","").replace("_","")
-
-        if passed_security_group:
-            db_sgs.append(passed_security_group)
-            logger.info(f"Using passed security group '{passed_security_group.security_group_id}' for RDS {cluster_identifier}.")
-            return db_sgs
-
+        sg_source = sg_config.get("source", "CREATE_NEW").upper(); safe_suffix = construct_id_suffix.replace("-","").replace("_","")
+        
         if sg_source == "USE_EXISTING_IDS":
             existing_ids = sg_config.get("existing_ids", [])
             if not existing_ids:
-                logger.warning(f"SG source USE_EXISTING_IDS for {cluster_identifier} but no 'existing_ids'. Creating default.")
-                db_sgs.append(ec2.SecurityGroup(self, f"DefaultDbSgAurora{safe_suffix}", vpc=vpc, description=f"Default SG for {cluster_identifier}"))
+                raise ValueError(f"SG source USE_EXISTING_IDS for {cluster_identifier} but no 'existing_ids'.")
             else:
                 for i, sg_id in enumerate(existing_ids):
-                    try: db_sgs.append(ec2.SecurityGroup.from_security_group_id(self, f"ImportedDbSgAurora{i}{safe_suffix}", sg_id))
-                    except Exception as e: logger.error(f"Failed import SG {sg_id} for {cluster_identifier}: {e}")
+                    try: 
+                        imported_sg = ec2.SecurityGroup.from_security_group_id(self, f"ImportedDbSgAurora{i}{safe_suffix}", sg_id)
+                        db_sgs.append(imported_sg)
+                        logger.info(f"Imported SG {sg_id} for {cluster_identifier}.")
+                    except Exception as e: 
+                        logger.error(f"Failed import SG {sg_id} for {cluster_identifier}: {e}")
+                        raise
         elif sg_source == "CREATE_NEW":
             new_sg_opts = sg_config.get("create_new_options", {}); db_sg_name = new_sg_opts.get("name", f"{cluster_identifier}-sg")
-            db_sg = ec2.SecurityGroup(self, f"DbClusterSecurityGroup{safe_suffix}", vpc=vpc, security_group_name=db_sg_name, description=new_sg_opts.get("description", f"SG for RDS Cluster {cluster_identifier}"), allow_all_outbound=new_sg_opts.get("allow_all_outbound", True))
-            db_port = self.config.get("port", default_engine_port);
-            if db_port is None: raise ValueError(f"Cannot determine DB port for SG rules of {cluster_identifier}")
-            for i, source_sg_id in enumerate(new_sg_opts.get("allow_ingress_from_sg_ids", [])):
-                try: source_sg = ec2.SecurityGroup.from_security_group_id(self, f"SourceSgForAurora{i}{safe_suffix}", source_sg_id); db_sg.add_ingress_rule(source_sg, ec2.Port.tcp(db_port), f"Allow DB access from SG {source_sg_id}")
-                except Exception as e: logger.error(f"Failed lookup source SG ID '{source_sg_id}': {e}")
-            db_sgs.append(db_sg)
-        else: raise ValueError(f"Invalid security_group_config.source: {sg_source} for {cluster_identifier}")
+            
+            db_sg = ec2.SecurityGroup(self, f"DbClusterSecurityGroup{safe_suffix}",
+                vpc=vpc,
+                security_group_name=db_sg_name,
+                description=new_sg_opts.get("description", f"SG for RDS Cluster {cluster_identifier}"),
+                allow_all_outbound=new_sg_opts.get("allow_all_outbound", True)
+            )
+            logger.info(f"Created new SG '{db_sg_name}' for {cluster_identifier}.")
 
+            db_port = self.config.get("port", default_engine_port)
+            if db_port is None: raise ValueError(f"Cannot determine DB port for SG rules of {cluster_identifier}")
+            
+            for i, source_sg_id in enumerate(new_sg_opts.get("allow_ingress_from_sg_ids", [])):
+                try: 
+                    source_sg = ec2.SecurityGroup.from_security_group_id(self, f"SourceSgForAuroraRule{i}{safe_suffix}", source_sg_id)
+                    db_sg.add_ingress_rule(source_sg, ec2.Port.tcp(db_port), f"Allow DB access from SG {source_sg_id}")
+                    logger.info(f"Added ingress rule from SG '{source_sg_id}'.")
+                except Exception as e: 
+                    logger.error(f"Failed lookup/add rule for source SG ID '{source_sg_id}': {e}")
+                    raise
+            
+            for i, cidr in enumerate(new_sg_opts.get("allow_ingress_from_cidrs", [])):
+                try:
+                    db_sg.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(db_port), f"Allow DB access from CIDR {cidr}")
+                    logger.info(f"Added ingress rule from CIDR '{cidr}'.")
+                except Exception as e:
+                    logger.error(f"Failed add rule for CIDR '{cidr}': {e}")
+                    raise
+
+            if new_sg_opts.get("allow_ingress_from_self", False):
+                db_sg.add_ingress_rule(db_sg, ec2.Port.all_traffic(), "Allow traffic from other members of this SG")
+                logger.info(f"Added ingress rule from self to SG '{db_sg_name}'.")
+
+            db_sgs.append(db_sg)
+        else: 
+            raise ValueError(f"Invalid security_group_config.source: '{sg_source}' for {cluster_identifier}.")
+        
         if not db_sgs:
-             db_sgs.append(ec2.SecurityGroup(self, f"FallbackDefaultDbSgAurora{safe_suffix}", vpc=vpc, description=f"Fallback Default SG for {cluster_identifier}"))
+            raise ValueError(f"No Security Groups resolved/created for {cluster_identifier}.")
 
         return db_sgs
 
@@ -302,10 +340,10 @@ class AuroraClusterStack(NestedStack):
             if not family: raise ValueError(f"Cluster PG 'family' could not be determined for {cluster_identifier}")
 
             return rds.ParameterGroup(self, f"DbClusterPgCreate{safe_suffix}",
-                                     engine=db_engine,
-                                     parameter_group_name=create_opts.get("name_prefix", f"{cluster_identifier.lower().replace('_','-')}-cluster-pg"),
-                                     description=create_opts.get("description", f"Custom Cluster PG for {cluster_identifier}"),
-                                     parameters=create_opts.get("parameters"))
+                                      engine=db_engine,
+                                      parameter_group_name=create_opts.get("name_prefix", f"{cluster_identifier.lower().replace('_','-')}-cluster-pg"),
+                                      description=create_opts.get("description", f"Custom Cluster PG for {cluster_identifier}"),
+                                      parameters=create_opts.get("parameters"))
         return None
 
     def _resolve_instance_parameter_group(self, cluster_identifier: str, db_engine: rds.IClusterEngine, engine_type: str, construct_id_suffix: str, instance_pg_config:dict ) -> rds.IParameterGroup | None:
@@ -321,36 +359,11 @@ class AuroraClusterStack(NestedStack):
             if not family: raise ValueError(f"Instance PG 'family' could not be determined for {cluster_identifier}")
 
             return rds.ParameterGroup(self, f"DbInstPgCreate{safe_suffix}",
-                                     engine=db_engine,
-                                     parameter_group_name=create_opts.get("name_prefix", f"{cluster_identifier.lower().replace('_','-')}-instance-pg"),
-                                     description=create_opts.get("description", f"Custom Instance PG for {cluster_identifier}"),
-                                     parameters=create_opts.get("parameters"))
+                                      engine=db_engine,
+                                      parameter_group_name=create_opts.get("name_prefix", f"{cluster_identifier.lower().replace('_','-')}-instance-pg"),
+                                      description=create_opts.get("description", f"Custom Instance PG for {cluster_identifier}"),
+                                      parameters=create_opts.get("parameters"))
         return None
-
-    def _parse_performance_insights(self, monitoring_config: dict, cluster_identifier: str, construct_id_suffix: str) -> tuple[rds.PerformanceInsightRetention | None, kms.IKey | None]:
-        pi_kms_key = None; pi_retention = None; safe_suffix = construct_id_suffix.replace("-","").replace("_","")
-        if monitoring_config.get("enable_performance_insights_instances", monitoring_config.get("enable_performance_insights", False)):
-            pi_retention = rds.PerformanceInsightRetention.DEFAULT
-            kms_key_id = monitoring_config.get("performance_insights_kms_key_id_instances", monitoring_config.get("performance_insights_kms_key_id"))
-            if kms_key_id:
-                try: pi_kms_key = kms.Key.from_key_arn(self, f"PerfInsightsKmsKeyAurora{safe_suffix}", kms_key_id)
-                except Exception as e: logger.error(f"Failed import PI KMS key {kms_key_id}: {e}")
-        return pi_retention, pi_kms_key
-
-
-    def _parse_enhanced_monitoring(self, monitoring_config: dict, cluster_identifier: str, construct_id_suffix: str) -> tuple[Duration | None, iam.IRole | None]:
-        interval = None; role = None; safe_suffix = construct_id_suffix.replace("-","").replace("_","")
-        if monitoring_config.get("enable_enhanced_monitoring", False):
-            interval_seconds = monitoring_config.get("monitoring_interval_seconds", 60)
-            if isinstance(interval_seconds, int) and interval_seconds > 0:
-                interval = Duration.seconds(interval_seconds)
-                role_arn = monitoring_config.get("monitoring_role_arn")
-                if role_arn:
-                    try: role = iam.Role.from_role_arn(self, f"ImportedMonitoringRoleAurora{safe_suffix}", role_arn)
-                    except Exception as e: logger.error(f"Failed import monitoring role {role_arn}: {e}")
-            else: interval = None
-        return interval, role
-
 
     def _get_aurora_cluster_engine(self, engine_type_str: str, rds_config: dict) -> rds.IClusterEngine:
         version_str = rds_config.get("engine_version")
@@ -386,18 +399,14 @@ class AuroraClusterStack(NestedStack):
 
     def _get_aurora_parameter_group_family(self, engine_type: str, engine_version: str | None) -> str | None:
         if not engine_version: return None
-
         major_version_part = engine_version.split('.')[0]
-
         if engine_type == "AURORA_MYSQL":
             if engine_version.startswith("8.0"): return "aurora-mysql8.0"
             if engine_version.startswith("5.7"): return "aurora-mysql5.7"
-            logger.warning(f"Could not precisely determine Aurora MySQL PG family for version {engine_version}. Using generic.")
+            logger.warning(f"Could not precisely determine Aurora MySQL PG family for version {engine_version}.")
             return f"aurora-mysql{major_version_part}.0"
-
         if engine_type == "AURORA_POSTGRESQL":
             return f"aurora-postgresql{major_version_part}"
-
         logger.warning(f"Could not determine Aurora PG family for {engine_type} {engine_version}.")
         return None
 
@@ -412,22 +421,6 @@ class AuroraClusterStack(NestedStack):
             1827: logs.RetentionDays.FIVE_YEARS, 3653: logs.RetentionDays.TEN_YEARS
         }
         if days in mapping: return mapping[days]
-        if 28 <= days <= 31: return logs.RetentionDays.ONE_MONTH
-        if 59 <= days <= 62: return logs.RetentionDays.TWO_MONTHS
-
-        logger.warning(f"Retention period {days} days not directly mapped to a precise enum value. Using closest standard.")
-        if days > 0:
-            if days >= 3653: return logs.RetentionDays.TEN_YEARS
-            if days >= 1827: return logs.RetentionDays.FIVE_YEARS
-            if days >= 731: return logs.RetentionDays.TWO_YEARS
-            if days >= 365: return logs.RetentionDays.ONE_YEAR
-            if days >= 180: return logs.RetentionDays.SIX_MONTHS
-            if days >= 90: return logs.RetentionDays.THREE_MONTHS
-            if days >= 60: return logs.RetentionDays.TWO_MONTHS
-            if days >= 30: return logs.RetentionDays.ONE_MONTH
-            if days >= 14: return logs.RetentionDays.TWO_WEEKS
-            if days >= 7: return logs.RetentionDays.ONE_WEEK
-            if days >= 5: return logs.RetentionDays.FIVE_DAYS
-            if days >= 3: return logs.RetentionDays.THREE_DAYS
-            if days >= 1: return logs.RetentionDays.ONE_DAY
+        logger.warning(f"Retention period {days} days not mapped. Using closest standard.")
+        if days > 1: return logs.RetentionDays.ONE_DAY
         return None

@@ -175,167 +175,17 @@ def get_deployment_configurations() -> dict:
         }
     ]
     
-    # --- RDS Instance and Cluster Configurations ---
-    rds_deployments_config = {
-        "deploy": False, 
-        "description": "Configuration group for all RDS Database Instances and Clusters.",
-        "instances": [
-            {
-                "id": "MySQLExampleDB", 
-                "enabled": True, 
-                "deployment_architecture": "INSTANCE", # "INSTANCE" or "CLUSTER" (for Aurora)
-                "engine_type": "MYSQL", 
-                # Available engine_type options (non-Aurora): 
-                # "MYSQL", "POSTGRESQL", "MARIADB", 
-                # "ORACLE_SE1", "ORACLE_SE2", "ORACLE_EE", "ORACLE_EE_CDB",
-                # "SQL_SERVER_EX", "SQL_SERVER_WEB", "SQL_SERVER_SE", "SQL_SERVER_EE"
-                # For Aurora: "AURORA_MYSQL", "AURORA_POSTGRESQL" (handled by AuroraClusterStack)
-                "config": {
-                    # --- General Settings ---
-                    "instance_identifier": "mysql-example-main", # Physical name in AWS console
-                    "engine_version": "8.0.36", # Must match engine_type. E.g., "15.5" for PG, "19.0.0.0.ru-..." for Oracle
-                    
-                    # --- Instance Class ---
-                    # Choose from: https://aws.amazon.com/rds/instance-types/
-                    # Standard classes (includes m classes): e.g., "db.m5.large", "db.m6g.large" (Graviton)
-                    # Memory optimized classes (includes r and x classes): e.g., "db.r5.large", "db.x2g.medium"
-                    # Burstable classes (includes t classes): e.g., "db.t3.medium", "db.t4g.medium"
-                    "instance_type": "t3.medium", 
 
-                    # --- Storage ---
-                    "allocated_storage_gb": 500, # In GiB
-                    "storage_type": "gp3", # Options: "standard", "gp2", "gp3", "io1", "io2"
-                    # "iops": 3000, # Required for "io1", "io2". Optional & configurable for "gp3".
-                    # "storage_throughput": 125, # Only for "gp3". In MiBps.
-	                "enable_storage_autoscaling": True, # Flag for storage autoscaling
-	                "max_allocated_storage_gb": 200, # Used if enable_storage_autoscaling is True
-	
-
-                    # --- Credentials ---
-                    "credentials": {
-                        "source": "GENERATE_NEW_SECRET", # "GENERATE_NEW_SECRET" or "USE_EXISTING_SECRET_ARN"
-                        "master_username": "adminuser", 
-                        "generate_new_secret_options": { # Used if source is "GENERATE_NEW_SECRET"
-                            # "secret_name_prefix": "rds/mysql-example", 
-                            # "password_length": 20,
-                            # "exclude_characters": "\"@/\\' " 
-                        },
-                        # "existing_secret_arn": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:NAME-SUFFIX" # Used if source is "USE_EXISTING_SECRET_ARN"
-                    },
-
-                    # --- Connectivity ---
-                    "vpc_config": {
-                        # Option 1: Use an existing VPC (looked up by ID)
-                        "lookup_existing_vpc_by_id": "vpc-08e1a969d58a58b94", # <<< YOUR ACTUAL DevAlphaVPC ID or other existing VPC
-                        # Option 2: Use a VPC created by this CDK app (referenced by its logical ID from vpcs section)
-                        # "use_cdk_created_vpc_id": "DevAlphaVPC", # Matches 'id' from 'vpcs.instances' list
-                        
-                        # Note on "Create New VPC for this RDS": 
-                        #   This is best handled by defining the VPC in the 'vpcs' section and then referencing it here
-                        #   using 'use_cdk_created_vpc_id' or 'lookup_existing_vpc_by_id' after it's deployed.
-                        #   An RDS stack should not typically create a whole new VPC itself.
-
-                        "subnet_type_for_rds": "PRIVATE_WITH_EGRESS", # Options: "PRIVATE_WITH_EGRESS", "PRIVATE_ISOLATED"
-                                                                    # DbInstanceStack uses this for ec2.SubnetSelection
-		            "security_group_config": {
-		                            "source": "CREATE_NEW", # Options: "CREATE_NEW", "USE_EXISTING_IDS"
-		                            "create_new_options": { # Used if source is "CREATE_NEW"
-		                                "name": "mysql-example-db-sg", 
-		                                "description": "SG for MySQL Example DB",
-		                                "allow_all_outbound": True,  # Default
-		                                "allow_ingress_from_sg_ids": ["sg-06822dc0f98481e26"], # <<< YOUR APP SG ID(s)
-					                    # "allow_ingress_from_cidrs": ["10.10.x.x/yy"], # Optional
-					                    # "allow_ingress_from_self": False # Optional
-					
-		                            },
-		                            # "existing_ids": ["sg-xxxxxxxxxxxxxxxxx, "sg-yyyyyyyyyyyyyyyyy""] # Used if source is "USE_EXISTING_IDS"
-		                        }
-                    },
-                    "port": 3306, # Engine default will be used if not specified
-                    "publicly_accessible": False, # Recommended: False
-
-                    # --- Database Options ---
-                    "database_name": "MyExampleDB", # Initial database to create
-                    "parameter_group": {
-                        "source": "DEFAULT", # "DEFAULT", "EXISTING_NAME", "CREATE_NEW"
-                        # "name": "your-custom-mysql80-param-group", # Required if source is "EXISTING_NAME"
-                        # "create_new_options": {
-                        #     # "family": "mysql8.0", # Usually auto-detected by DbInstanceStack
-                        #     "name_prefix": "mysql-example", 
-                        #     "description": "Custom PG for MySQL Example",
-                        #     "parameters": {"max_connections": "300", "innodb_buffer_pool_size": "2147483648"} # Example
-                        # }
-                    },
-                    "option_group": {
-                        "source": "DEFAULT", # "DEFAULT", "EXISTING_NAME", "CREATE_NEW"
-                        # "name": "your-custom-mysql-option-group", # Required if source is "EXISTING_NAME"
-                        # "create_new_options": {
-                        #     # "engine_name_for_og": "mysql", # Usually auto-detected
-                        #     # "major_engine_version_for_og": "8.0", # Usually auto-detected
-                        #     "name_prefix": "mysql-example-og",
-                        #     "description": "Custom OG for MySQL Example",
-                        #     "configurations": [ # List of rds.OptionConfiguration props
-                        #         {"name": "MARIADB_AUDIT_PLUGIN", "settings": {"SERVER_AUDIT_EVENTS": "CONNECT,QUERY"}}
-                        #     ]
-                        # }
-                    },
-
-                    # --- Availability & Durability ---
-                    "multi_az": False, # Set to True for production/HA
-                    # "availability_zone": "us-east-1c", # Specify if multi_az is False and you need a specific AZ# Only if multi_az_deployment is False
-
-                    # --- Backup ---
-	                "enable_automated_backups": True, # Flag for automated backups
-                    "backup_retention_days": 14, # 0 to disable, 1-35 days
-                    "preferred_backup_window": "06:00-07:00", # UTC, e.g., "hh:mm-hh:mm"
-                    "copy_tags_to_snapshot": True,
-                    # "replicate_automated_backups_to_region": "us-west-2", # Optional: ARN of KMS key in target region for encryption
-                    # "replicated_automated_backups_kms_key_arn": "arn:aws:kms:us-west-2:ACCOUNT_ID:key/KEY_ID"
-
-                    # --- Encryption ---
-	               "storage_encrypted": True, # Default is True recommended, but good to be explicit
-	               "enable_custom_kms_encryption": False, # Flag for custom KMS key
-                    # "kms_key_id": "arn:aws:kms:YOUR_REGION:YOUR_ACCOUNT_ID:key/YOUR_RDS_KMS_KEY_ID", # For customer-managed KMS key
-
-                    # --- Logging and Monitoring ---
-                    "monitoring":{
-                        "cloudwatch_logs_exports": ["error", "general", "slowquery", "audit"],
-                        "enable_performance_insights": True, 
-                        "performance_insights_retention_period_days": 7, # 7 (free) or up to 731 (2 years, paid)
-                        # "performance_insights_kms_key_id": "arn:aws:kms:...", # Optional KMS key for PI
-                        "enable_enhanced_monitoring": True, # Flag for Enhanced Monitoring
-                        "monitoring_interval_seconds": 60, # 0 (disabled), 1, 5, 10, 15, 30, 60 for Enhanced Monitoring # Used if                       enable_enhanced_monitoring is True
-                        # "monitoring_role_arn": "arn:aws:iam::ACCOUNT_ID:role/RDSEnhancedMonitoringRole" # Optional custom role
-                        # "enable_devops_guru": True, # If supported and desired, False, # Flag for DevOps Guru
-                        # "devops_guru_kms_key_id": "arn:aws:kms:..." # Optional KMS key for DevOps Guru
-                    },
-
-                    # --- Maintenance ---
-                    "preferred_maintenance_window": "sun:07:30-sun:08:30", # UTC, e.g., "ddd:hh:mm-ddd:hh:mm"
-                    "auto_minor_version_upgrade": True,
-                    "allow_major_version_upgrade": False, # Caution with this in prod
-
-                    # --- Additional Configuration ---
-                    "deletion_protection": False, # Recommended for production
-                    "iam_database_authentication_enabled": False,
-                    # "license_model": "license-included", # Required for SQL Server, Oracle (e.g. "bring-your-own-license")
-                    
-                    "tags": {"CodeDeploy": "AppEC2", "Application": "MySQLExample"}
-                }
-            }
-            # Add more RDS instance definitions here
-        ]
-    }
     
     
     # --- RDS Instance and Cluster Configurations ---
     rds_deployments_config = {
-        "deploy": False, 
+        "deploy": True, 
         "description": "Configuration group for all RDS Database Instances and Clusters.",
         "instances": [
             {
                 "id": "MySQLExampleDB", 
-                "enabled": True, 
+                "enabled": False, 
                 "deployment_architecture": "INSTANCE", # "INSTANCE" or "CLUSTER" (for Aurora)
                 "engine_type": "MYSQL", 
                 # Available engine_type options (non-Aurora): 
@@ -396,8 +246,8 @@ def get_deployment_configurations() -> dict:
 		                                "name": "mysql-example-db-sg", 
 		                                "description": "SG for MySQL Example DB",
 		                                "allow_all_outbound": True,  # Default
-		                                "allow_ingress_from_sg_ids": ["sg-07912ab450466bc24"], # <<< YOUR APP SG ID(s)
-					                    # "allow_ingress_from_cidrs": ["10.10.x.x/yy"], # Optional
+		                                # "allow_ingress_from_sg_ids": ["sg-07912ab450466bc24"], # <<< YOUR APP SG ID(s)
+					                    "allow_ingress_from_cidrs": ["0.0.0.0/0"], # Optional
 					                    # "allow_ingress_from_self": False # Optional
 					
 		                            },
@@ -475,11 +325,9 @@ def get_deployment_configurations() -> dict:
                     
                     "tags": {"CodeDeploy": "AppEC2", "Application": "MySQLExample"}
                 }
-            }
+            },
             # Add more RDS instance definitions here
-        ],
-        "instances": [
-            # ... (your existing DbInstanceStack configurations) ...
+        
             {
                 "id": "AuroraMySQLProdCluster", 
                 "enabled": False, 
@@ -586,7 +434,7 @@ def get_deployment_configurations() -> dict:
             },
             {
                 "id": "MySQLExampleDB", 
-                "enabled": False, 
+                "enabled": True, 
                 "deployment_architecture": "INSTANCE", # "INSTANCE" or "CLUSTER" (for Aurora)
                 "engine_type": "MYSQL", 
                 # Available engine_type options (non-Aurora): 
@@ -607,12 +455,12 @@ def get_deployment_configurations() -> dict:
                     "instance_type": "t3.medium", 
 
                     # --- Storage ---
-                    "allocated_storage_gb": 500, # In GiB
+                    "allocated_storage_gb": 200, # In GiB
                     "storage_type": "gp3", # Options: "standard", "gp2", "gp3", "io1", "io2"
                     # "iops": 3000, # Required for "io1", "io2". Optional & configurable for "gp3".
                     # "storage_throughput": 125, # Only for "gp3". In MiBps.
 	                "enable_storage_autoscaling": True, # Flag for storage autoscaling
-	                "max_allocated_storage_gb": 200, # Used if enable_storage_autoscaling is True
+	                "max_allocated_storage_gb": 400, # Used if enable_storage_autoscaling is True
 	
 
                     # --- Credentials ---
@@ -629,6 +477,11 @@ def get_deployment_configurations() -> dict:
 
                     # --- Connectivity ---
                     "vpc_config": {
+                        # "lookup_existing_vpc_by_id": "vpc-YOUR_EXISTING_VPC_ID_HERE",
+                        # "subnet_ids_for_rds": [
+                        #     "subnet-YOUR_PRIVATE_SUBNET_ID_1",
+                        #     "subnet-YOUR_PRIVATE_SUBNET_ID_2"
+                        # ],
                         # Option 1: Use an existing VPC (looked up by ID)
                         # "lookup_existing_vpc_by_id": "vpc-0b2b7d17da846043d", # <<< YOUR ACTUAL DevAlphaVPC ID or other existing VPC
                         "use_cdk_created_vpc_id": "DevAlphaVPC",
@@ -648,13 +501,16 @@ def get_deployment_configurations() -> dict:
 		                                "name": "mysql-example-db-sg", 
 		                                "description": "SG for MySQL Example DB",
 		                                "allow_all_outbound": True,  # Default
-		                                "allow_ingress_from_sg_ids": ["sg-07912ab450466bc24"], # <<< YOUR APP SG ID(s)
-					                    # "allow_ingress_from_cidrs": ["10.10.x.x/yy"], # Optional
+		                                # "allow_ingress_from_sg_ids": ["sg-0f71715b37231069b"], # <<< YOUR APP SG ID(s)
+					                    "allow_ingress_from_cidrs": ["172.31.0.0/16"], # Optional
 					                    # "allow_ingress_from_self": False # Optional
 					
 		                            },
+                              
 		                            # "existing_ids": ["sg-xxxxxxxxxxxxxxxxx, "sg-yyyyyyyyyyyyyyyyy""] # Used if source is "USE_EXISTING_IDS"
+                                    # "existing_ids": ["sg-YOUR_EXISTING_APP_SG_ID","sg-YOUR_EXISTING_DB_SG_ID"]
 		                        }
+              
                     },
                     "port": 3306, # Engine default will be used if not specified
                     "publicly_accessible": False, # Recommended: False
@@ -730,6 +586,127 @@ def get_deployment_configurations() -> dict:
             },
             {
                 "id": "AuroraMySQLProdCluster", 
+                "enabled": True, 
+                "deployment_architecture": "CLUSTER", # <<< Key to differentiate
+                "engine_type": "AURORA_MYSQL", # Options: "AURORA_MYSQL", "AURORA_POSTGRESQL"
+                "config": {
+                    # --- Cluster-Level Settings ---
+                    "cluster_identifier": "aurora-mysql-prod-cluster", # Physical name for the cluster
+                    "engine_version": "8.0.mysql_aurora.3.06.0", # Check AWS console for exact Aurora MySQL 8.0 compatible versions
+                    "default_database_name": "MyApplicationDB", # Initial database to create in the cluster
+
+                    # --- Credentials (same structure as DbInstanceStack) ---
+                    "credentials": {
+                        "source": "GENERATE_NEW_SECRET", 
+                        "master_username": "auroraadmin", 
+                        "generate_new_secret_options": { "secret_name_prefix": "rds/aurora-mysql-prod" },
+                        # "existing_secret_arn": null 
+                        # "source": "USE_EXISTING_SECRET_ARN",
+                        # "master_username": "auroraadmin",
+                        # "generate_new_secret_options": {},
+                        # "existing_secret_arn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:MyExistingSecretForAurora-aBcDeF"
+                    },
+
+                    # --- Connectivity (same structure as DbInstanceStack) ---
+                    "vpc_config": {
+                        # "use_cdk_created_vpc_id": "DevAlphaVPC", # Or "lookup_existing_vpc_by_id"
+                        # "lookup_existing_vpc_by_id": "vpc-YOUR_EXISTING_VPC_ID_HERE",
+                        # "subnet_ids_for_rds": [
+                        #     "subnet-YOUR_PRIVATE_SUBNET_ID_1",
+                        #     "subnet-YOUR_PRIVATE_SUBNET_ID_2"
+                        # ],
+                        "use_cdk_created_vpc_id": "DevAlphaVPC",
+                        "lookup_existing_vpc_by_id":"vpc-08e1a969d58a58b94",
+                        "subnet_type_for_rds": "PRIVATE_WITH_EGRESS", 
+                        "security_group_config": {
+                            "source": "CREATE_NEW", 
+                            "create_new_options": { 
+                                "name": "aurora-mysql-prod-cluster-sg", 
+                                "description": "SG for Aurora MySQL Prod Cluster",
+                                # "allow_ingress_from_sg_ids": ["sg-07912ab450466bc24"], 
+                                "allow_ingress_from_cidrs": ["172.31.0.0/16"], # Optional
+                            }
+                            # "source": "USE_EXISTING_IDS",
+                            # "create_new_options": {},
+                            # "existing_ids": [
+                            #     "sg-YOUR_EXISTING_AURORA_SG_ID"
+                            # ]
+                        }
+                    },
+                    "port": 3306,  #Default for Aurora MySQL
+
+                    # --- Instances within the Cluster ---
+                    "instances_config": {
+                        "count": 2, # Number of DB instances in the cluster (e.g., 1 writer, 1 reader)
+                        "instance_type": "r6g.large", # Common instance type for all instances in the cluster
+                        # For more granular control, you could define a list of instance configs:
+                        # "instance_definitions": [
+                        #     {"instance_type": "db.r6g.xlarge", "publicly_accessible": False, "promotion_tier": 0}, # Writer
+                        #     {"instance_type": "db.r6g.large", "publicly_accessible": False, "promotion_tier": 1}  # Reader
+                        # ],
+                        "auto_minor_version_upgrade_instances": True, # For instances in the cluster
+                        "publicly_accessible_instances": False,  #Default for instances
+                        "enable_performance_insights_instances": True,
+                        "performance_insights_retention_period_instances": 7,
+                        # "performance_insights_kms_key_id_instances": "arn:aws:kms:...",
+                        "ca_certificate_identifier_instances": "rds-ca-rsa2048-g1", # Or specific cert
+                    },
+
+                    # --- Serverless v2 Scaling (Optional) ---
+                    "enable_serverless_v2_scaling": False, # Set to True to enable
+                    # "serverless_v2_min_capacity_acu": 0.5, # Min Aurora Capacity Units (ACUs)
+                    # "serverless_v2_max_capacity_acu": 16.0, # Max Aurora Capacity Units (ACUs)
+
+                    # --- Backup & Recovery ---
+                    "enable_automated_backups": True,
+                    "backup_retention_days": 14,
+                    "preferred_backup_window": "04:00-05:00",
+                    "copy_tags_to_snapshot": True,
+                    "enable_backtrack": False, # Aurora-specific feature
+                    # "backtrack_window_hours": 72, # If enable_backtrack is True (e.g., 24, 48, 72)
+
+                    # --- Encryption ---
+                    "storage_encrypted": True,
+                    "enable_custom_kms_encryption": False,
+                    # "kms_key_id": "arn:aws:kms:REGION:ACCOUNT:key/YOUR_AURORA_KMS_KEY_ID",
+
+                    # --- Logging and Monitoring ---
+                    "monitoring": {
+                        "cloudwatch_logs_exports": ["audit", "error", "general", "slowquery"], #  MySQL specific
+                        # For Aurora PostgreSQL: ["postgresql", "upgrade"]
+                        "enable_http_endpoint": False, # For RDS Data API
+                        # "monitoring_interval_seconds": 0, // Enhanced Monitoring for instances (set in instances_config or per instance)
+                        # "monitoring_role_arn": "arn:aws:iam::ACCOUNT:role/RDSEnhancedMonitoringRole"
+                    },
+                    
+                    # --- Cluster Parameter Group ---
+                    "cluster_parameter_group": {
+                        "source": "DEFAULT", # "DEFAULT", "EXISTING_NAME", "CREATE_NEW"
+                        # "name": "custom-aurora-mysql80-cluster-pg",
+                        # "create_new_options": {
+                        #     "family": "aurora-mysql8.0", // Must be correct Aurora family
+                        #     "description": "Custom Cluster PG for Aurora MySQL Prod",
+                        #     "parameters": {"aurora_lab_mode": "1", "server_audit_logging": "1"}
+                        # }
+                    },
+                    # --- DB Instance Parameter Group (for instances in the cluster) ---
+                    "instance_parameter_group": { # Applied to all instances in the cluster
+                        "source": "DEFAULT", 
+                        # "name": "custom-aurora-mysql80-instance-pg",
+                        # "create_new_options": { /* ... */ }
+                    },
+                    
+                    # --- Maintenance & Deletion ---
+                    "preferred_maintenance_window": "mon:05:30-mon:06:30",
+                    "deletion_protection": True,
+                    "iam_database_authentication_enabled": False,
+
+                    "tags": {"Environment": "Production", "Application": "AuroraMySQLService"}
+                }
+            },
+    
+            {
+                "id": "AuroraMySQLProdCluster", 
                 "enabled": False, 
                 "deployment_architecture": "CLUSTER", 
                 "engine_type": "AURORA_MYSQL", 
@@ -784,14 +761,14 @@ def get_deployment_configurations() -> dict:
                     "iam_database_authentication_enabled": False,
                     "tags": {"Environment": "Production", "Application": "AuroraMySQLService"}
                 }
-            }
+            },
             # Add more RDS instance/cluster definitions here
         ]
     }
     
     # --- S3 Bucket Configurations (Structure based on S3_CONFIG reference) ---
     s3_deployments_config = {
-        "deploy": False, # <<< ENABLE S3 DEPLOYMENTS GLOBALLY
+        "deploy": True, # <<< ENABLE S3 DEPLOYMENTS GLOBALLY
         "description": "Group for S3 Bucket Deployments",
 
         # --- Default settings applied to ALL buckets unless overridden ---
@@ -812,10 +789,23 @@ def get_deployment_configurations() -> dict:
 
         # --- List of individual bucket definitions ---
         "buckets": [
+            {
+                "id": "AccessLogsBucket",
+                "enabled": True,
+                "config": {
+                    "bucket_name": "ct-bucket-access-logs-09-05-25",
+                    "object_ownership": "BucketOwnerEnforced",
+                    "block_all_public_access": True,
+                    "removal_policy": "RETAIN",
+                    "tags": {
+                        "Purpose": "AccessLogging"
+                    }
+                }
+            },
             # == Example 1: Basic Counted Buckets (like basic_buckets_creation) ==
             {
-                "id": "BasicCounted",
-                "enabled": False,
+                "id": "basic-counted",
+                "enabled": True,
                 "count": 2, 
                 "config": {
                     "bucket_name_prefix": "core-alpha-counted-bucket", 
@@ -826,7 +816,7 @@ def get_deployment_configurations() -> dict:
                     "bucket_policy_statements": [ 
                         {
                             "sid": "AllowDevReadWrite", "effect": "Allow", "principal_type": "AWS",
-                            "principals": ["arn:aws:iam::198484116691:user/Chaithra"], 
+                            "principals": ["arn:aws:iam::417528805539:user/Chaithra"], 
                             "actions": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"],
                             "resources": ["{{BucketArn}}", "{{BucketArn}}/*"]
                         }
@@ -843,7 +833,7 @@ def get_deployment_configurations() -> dict:
                     "encryption": { 
                         "type": "S3_MANAGED", 
                         #  "type": "KMS",
-                        # "kms_key_arn": "arn:aws:kms:YOUR_REGION:YOUR_ACCOUNT_ID:key/YOUR_KMS_KEY_ID" # <<< REPLACE
+                        # "kms_key_arn": "arn:aws:kms:YOUR_REGION:YOUR_ACCOUNT_ID:key/YOUR_KMS_KEY_ID" 
                     },
                     "versioned": True,
                     "object_ownership": "BucketOwnerEnforced",
@@ -860,7 +850,7 @@ def get_deployment_configurations() -> dict:
                     "bucket_policy_statements": [
                         {
                             "sid": "AllowAppServerReadWrite", "effect": "Allow", "principal_type": "AWS",
-                            "principals": ["arn:aws:iam::198484116691:user/Chaithra"], 
+                            "principals": ["arn:aws:iam::417528805539:user/Chaithra"], 
                             "actions": ["s3:GetObject*", "s3:PutObject*", "s3:DeleteObject*", "s3:ListBucket"],
                             "resources": ["{{BucketArn}}", "{{BucketArn}}/*"]
                         }
@@ -1106,7 +1096,8 @@ def get_deployment_configurations() -> dict:
                 "config": {
                     "security_group_name": "my-webapp-alb-sg",
                     "description": "Security group for MyWebAppALB",
-                    "vpc_id": "vpc-0682a04278f37a95c", #Explicit VPC for clarity
+                    "vpc_id": "vpc-0ae580a52d395dd02", #Explicit VPC for clarity
+                    "availability_zones": ["us-east-1a", "us-east-1b"],
                     "ingress_rules": [
                         {
                             "description": "Allow HTTP from Internet",
@@ -1137,7 +1128,8 @@ def get_deployment_configurations() -> dict:
                 "config": {
                     "security_group_name": "my-standalone-instance-sg",
                     "description": "Security group for standalone web instances",
-                    "vpc_id": "vpc-0682a04278f37a95c",
+                    "vpc_id": "vpc-0ae580a52d395dd02",
+                    "availability_zones": ["us-east-1a", "us-east-1b"],
                     "ingress_rules": [
                         {
                             "description": "Allow App Port 8080 from ALB SG",
@@ -1163,7 +1155,8 @@ def get_deployment_configurations() -> dict:
                 "config": {
                     "security_group_name": "my-asg-instance-sg",
                     "description": "Security group for ASG web instances",
-                    "vpc_id": "vpc-0682a04278f37a95c",
+                    "vpc_id": "vpc-0ae580a52d395dd02",
+                    "availability_zones": ["us-east-1a", "us-east-1b"],
                     "ingress_rules": [
                         {
                             "description": "Allow App Port 8080 from ALB SG",
@@ -1214,16 +1207,16 @@ def get_deployment_configurations() -> dict:
                         "architecture": "x86_64" # STRING: "x86_64" or "arm_64". Used with LATEST_AMAZON_LINUX*.
                     },
 
-                    "instance_type": "t3.micro",# STRING (Required): EC2 instance type (e.g., "t3.micro", "m5.large", "c5.2xlarge").
+                    "instance_type": "t2.micro",# STRING (Required): EC2 instance type (e.g., "t3.micro", "m5.large", "c5.2xlarge").
 
-                    "key_name": "my-cdk-keypair", # Specific key pair for this instance/group
+                    "key_name": "crmp-cdk-key", # Specific key pair for this instance/group
 
                     "network_config": { # OBJECT (Required): Network placement details.
-                        "vpc_id": "vpc-0682a04278f37a95c",    # STRING (Required): PHYSICAL ID of the EXISTING VPC to deploy into.
-                        "subnet_id":"subnet-01068ebd6184d034b",# STRING (Required): PHYSICAL ID of the EXISTING Subnet within the specified VPC.
+                        "vpc_id": "vpc-0ae580a52d395dd02",    # STRING (Required): PHYSICAL ID of the EXISTING VPC to deploy into.
+                        "subnet_id":"subnet-05e98ce8b30ba6f7c",# STRING (Required): PHYSICAL ID of the EXISTING Subnet within the specified VPC.
                         "associate_public_ip_address": True,
                         "security_group_refs": ["InstanceSG"],
-                        # "security_group_ids": [],# BOOLEAN: True to assign a public IP (if in a public subnet). False for private.
+                        # "security_group_ids": ["sg-03b41c4482caa9b8b"],# BOOLEAN: True to assign a public IP (if in a public subnet). False for private.
                         "source_dest_check": True,            # BOOLEAN: Enable/disable source/destination BGP check. Default True. Set False for NAT instances.
                         # "private_ip_address": "10.0.1.50"  # STRING (Optional): Assign a specific primary private IP address from the subnet.
                         # "network_interfaces": [ # LIST of OBJECTS (Advanced - for multiple ENIs. CfnInstance only)
@@ -1414,9 +1407,9 @@ def get_deployment_configurations() -> dict:
                     },
                     # "image_id": "ami-xxxxxxxxxxxxxxxxx", # STRING (Optional): Direct AMI ID. Overrides ami_config if both present.
 
-                    "instance_type": "t3.micro", # STRING (Optional): The instance type. If not set, must be provided at launch.
+                    "instance_type": "t2.micro", # STRING (Optional): The instance type. If not set, must be provided at launch.
 
-                    "key_name": "my-cdk-keypair", # STRING (Optional): Name of an existing EC2 KeyPair. <<< REPLACE
+                    "key_name": "crmp-cdk-key", # STRING (Optional): Name of an existing EC2 KeyPair. <<< REPLACE
 
                     # UserData: Choose one method.
                     
@@ -1438,7 +1431,7 @@ def get_deployment_configurations() -> dict:
                     "network_interfaces": [ # LIST of OBJECTS (Optional): Define network interfaces.
                         {
                             "device_index": 0, # INTEGER (Required for list): Index of the ENI.
-                            "subnet_id": "subnet-01068ebd6184d034b", # STRING (Optional): Subnet ID. If not set, must be provided at launch (e.g., by ASG). <<< REPLACE
+                            "subnet_id": "subnet-05e98ce8b30ba6f7c", # STRING (Optional): Subnet ID. If not set, must be provided at launch (e.g., by ASG). <<< REPLACE
                             "associate_public_ip_address": True, # BOOLEAN (Optional): Whether to associate a public IP.
                             "groups_ref_ids": ["AsgInstanceSG"],
                             # "groups": ["sg-07912ab450466bc24"], # LIST of STRINGS (Optional): List of Security Group IDs. <<< REPLACE
@@ -1459,7 +1452,7 @@ def get_deployment_configurations() -> dict:
                       "iam_instance_profile": {
                         "enabled": True,
                         # Provide ARN or Name of an EXISTING Instance Profile.
-                        "iam_instance_profile_arn": "arn:aws:iam::198484116691:instance-profile/ec2-new-ssm", # STRING (Optional) <<< REPLACE
+                        "iam_instance_profile_arn": "arn:aws:iam::417528805539:instance-profile/ec2-ssm-role", # STRING (Optional) <<< REPLACE
                         # "iam_instance_profile_name": "YourExistingProfileForLT", # STRING (Optional),
                         # Add the new reference ID
                         # "launchtemplate_service_role_ref_id": "LaunchTemplateServiceRole",
@@ -1632,7 +1625,7 @@ def get_deployment_configurations() -> dict:
             "enabled": True,             # BOOLEAN (Required): Set to 'true' to deploy this ALB, 'false' to skip its creation.
             "config": {                  # OBJECT (Required): Contains all specific configurations for this ALB.
                 "load_balancer_name": "my-web-app-alb-example", # STRING (Optional): The physical name of the Application Load Balancer. If omitted, a name is auto-generated by CloudFormation.
-                "vpc_id": "vpc-0682a04278f37a95c",      # STRING (Required): The ID of the VPC in which to create the ALB.
+                "vpc_id": "vpc-0ae580a52d395dd02",      # STRING (Required): The ID of the VPC in which to create the ALB.
                 "internet_facing": True,                # BOOLEAN (Required): Set to 'true' for an internet-facing ALB, 'false' for an internal ALB.
                 "ip_address_type": "IPV4",              # STRING (Optional): The IP address type. Default: "IPV4".
                                                         # Possible values: "IPV4", "DUALSTACK" (supports both IPv4 and IPv6).
@@ -1640,7 +1633,7 @@ def get_deployment_configurations() -> dict:
                 # Subnets for the ALB. The ALB will operate in the Availability Zones of these subnets.
                 # For high availability, provide public subnet IDs from at least two different Availability Zones for an internet-facing ALB.
                 # For internal ALBs, provide private subnet IDs from at least two different Availability Zones.
-                "subnet_ids": ["subnet-01068ebd6184d034b", "subnet-0d0c5c4014c9737be", "subnet-003eb439f8392c89a"], # LIST of STRINGS (Required, if 'subnet_selection' is not used): Specific physical subnet IDs.
+                "subnet_ids": ["subnet-05e98ce8b30ba6f7c", "subnet-0403bef8be36ff39d", "subnet-0d897f99ec8733ea3"], # LIST of STRINGS (Required, if 'subnet_selection' is not used): Specific physical subnet IDs.
                 
                 # "subnet_selection": { # OBJECT (Optional): Alternative to 'subnet_ids' for selecting subnets based on type or group name (tags).
                 #     "subnet_type": "PUBLIC",      # STRING (Optional): Type of subnets to select. 
@@ -1844,14 +1837,14 @@ def get_deployment_configurations() -> dict:
             "enabled": False,             # BOOLEAN (Required): Set to 'true' to deploy this NLB, 'false' to skip.
             "config": {                  # OBJECT (Required): Contains all specific configurations for this NLB.
                 "load_balancer_name": "my-core-nlb", # STRING (Optional): The physical name of the Network Load Balancer. Auto-generated if omitted.
-                "vpc_id": "vpc-0682a04278f37a95c",   # STRING (Required): The ID of the VPC in which to create the NLB.
+                "vpc_id": "vpc-0ae580a52d395dd02",   # STRING (Required): The ID of the VPC in which to create the NLB.
                 "internet_facing": False,            # BOOLEAN (Required): Set to 'true' for an internet-facing NLB, 'false' for an internal NLB.
                                                      # Internet-facing NLBs require Elastic IP Addresses (EIPs) for static IPs, either allocated by AWS or provided by you.
                 
                 # Subnets for the NLB. The NLB will have a network interface (and potentially a static IP) in each specified subnet's AZ.
                 # For HA, provide subnets from at least two different Availability Zones.
                 # For internet-facing NLBs, these are typically public subnets. For internal, private subnets.
-                "subnet_ids": ["subnet-01068ebd6184d034b","subnet-0d0c5c4014c9737be"], # LIST of STRINGS (Required if 'subnet_selection' not used): Specific physical subnet IDs.
+                "subnet_ids": ["subnet-05e98ce8b30ba6f7c","subnet-0403bef8be36ff39d","subnet-0d897f99ec8733ea3"], # LIST of STRINGS (Required if 'subnet_selection' not used): Specific physical subnet IDs.
                 
                 # "subnet_selection": { # OBJECT (Optional): Alternative to 'subnet_ids'.
           
@@ -2003,7 +1996,7 @@ def get_deployment_configurations() -> dict:
                     "target_group_name": "my-web-app-instance-tg", # STRING (Optional): Physical name. Auto-generated if omitted.
                     "load_balancer_type": "NETWORK", # STRING (Required): "APPLICATION" or "NETWORK". Determines if ALB or NLB TG is created.
                     
-                    "vpc_id": "vpc-0682a04278f37a95c",   # STRING (Required): The ID of the VPC in which to create the Target Group.
+                    "vpc_id": "vpc-0ae580a52d395dd02",   # STRING (Required): The ID of the VPC in which to create the Target Group.
                     
                     "port": 8080,                  # INTEGER (Required): The port on which the targets receive traffic.
                     "protocol": "TCP",            # STRING (Required): Protocol for traffic to targets.
@@ -2092,12 +2085,12 @@ def get_deployment_configurations() -> dict:
                 "enabled": True,            # BOOLEAN (Required): 'true' to deploy this ASG, 'false' to skip.
                 "config": {                 # OBJECT (Required): Contains all configurations for this Auto Scaling Group.
                     "auto_scaling_group_name": "my-web-app-asg-example", # STRING (Optional): Physical name. Auto-generated if omitted.
-                    "vpc_id": "vpc-0682a04278f37a95c", # STRING (Required): The VPC ID where instances will be launched.
+                    "vpc_id": "vpc-0ae580a52d395dd02", # STRING (Required): The VPC ID where instances will be launched.
                                                        # This is used to look up the VPC if vpc_subnets_config is by type/group.
                     
                     "vpc_subnets_config": { # OBJECT (Required): Specifies the subnets for the ASG.
                                             # Provide EITHER specific subnet_ids OR a subnet_selection_type.
-                        "subnet_ids": ["subnet-01068ebd6184d034b", "subnet-0d0c5c4014c9737be", "subnet-003eb439f8392c89a"], # LIST of STRINGS (Optional): Specific physical subnet IDs.
+                        "subnet_ids": ["subnet-05e98ce8b30ba6f7c", "subnet-0403bef8be36ff39d", "subnet-0d897f99ec8733ea3"], # LIST of STRINGS (Optional): Specific physical subnet IDs.
                                                                                                              # Instances will be balanced across the AZs of these subnets.
                         # "subnet_selection": { # OBJECT (Optional): Alternative to 'subnet_ids'.
                         #     "subnet_type": "PRIVATE_WITH_EGRESS", # STRING (Optional): e.g., "PUBLIC", "PRIVATE_WITH_EGRESS", "PRIVATE_ISOLATED".
@@ -2353,7 +2346,7 @@ def get_deployment_configurations() -> dict:
                 "source_config": {
                     "source_type": "GITHUB", # "GITHUB", "CODECOMMIT", "S3"
                     # --- GitHub Specific ---
-                    "github_connection_arn": "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1", # REPLACE
+                    "github_connection_arn": "arn:aws:codeconnections:us-east-1:417528805539:connection/64c817b4-9fd9-4e08-8792-3024f3440008", # REPLACE
                     "github_repo_owner": "chaithrashreekr7901",
                     "github_repo_name": "CDK-project", # The repository containing your application code
                     "github_branch_name": "cdk-project-updated", # The branch to monitor for changes
@@ -2441,4 +2434,4 @@ def get_deployment_configurations() -> dict:
         "pipeline_deployments": pipeline_deployments_config,
     }
     logger.info(f"DEBUG: Keys in final_config: {list(final_config.keys()) if isinstance(final_config, dict) else 'Not a dict'}")
-    return final_config
+    return final_config;

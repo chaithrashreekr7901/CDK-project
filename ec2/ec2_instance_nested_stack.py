@@ -380,18 +380,29 @@ class Ec2InstanceNestedStack(NestedStack):
         logger.info(f"No substantive UserData commands or mount configurations for '{self.config.get('instance_name')}'. Not setting UserData.")
         return None
 
+
     def _resolve_or_create_security_groups(self, vpc_id_for_sg: typing.Optional[str], network_cfg: dict, sg_definition_conf: dict) -> typing.Optional[typing.List[str]]:
         existing_sg_ids = network_cfg.get("security_group_ids")
         if existing_sg_ids and isinstance(existing_sg_ids, list) and len(existing_sg_ids) > 0:
-            logger.info(f"Using provided existing security_group_ids: {existing_sg_ids}")
             return existing_sg_ids
+        
         if sg_definition_conf.get("enabled", False):
-            logger.info(f"Attempting to create new security group for instance '{self.config.get('instance_name', self.node.id)}'.")
-            if not vpc_id_for_sg: raise ValueError("VPC ID is required in network_config to create a new security group.")
-            try: vpc_for_l2_sg = ec2.Vpc.from_lookup(self, "VpcContextForSG", vpc_id=vpc_id_for_sg)
-            except Exception as e: raise ValueError(f"Could not lookup VPC '{vpc_id_for_sg}' to create security group.") from e
+            if not vpc_id_for_sg:
+                raise ValueError("VPC ID is required to create a new security group.")
+
+            # --- THE FIX ---
+            availability_zones = network_cfg.get("availability_zones")
+            if not availability_zones or not isinstance(availability_zones, list):
+                raise ValueError("network_config.availability_zones (a list of strings) is required to create a security group.")
+
+            vpc_for_l2_sg = ec2.Vpc.from_vpc_attributes(self, "VpcContextForSG",
+                vpc_id=vpc_id_for_sg,
+                availability_zones=availability_zones
+            )
+            # --- END OF FIX ---
+
             return self._create_new_security_group(vpc_for_l2_sg, sg_definition_conf)
-        logger.warning(f"No security_group_ids provided and security_group_definition is not enabled for instance '{self.config.get('instance_name', self.node.id)}'. Instance may use VPC's default SG.")
+        
         return None
 
     def _create_new_security_group(self, vpc: ec2.IVpc, sg_def: dict) -> typing.Optional[typing.List[str]]:

@@ -24,16 +24,22 @@ class DbInstanceStack(NestedStack):
     def __init__(self, scope: Construct, construct_id: str, *,
                  rds_config: dict,
                  vpc: ec2.IVpc | None,
-                 security_group: typing.Optional[ec2.ISecurityGroup] = None,
+                 security_group_config: typing.Dict, # <-- Receive the SG config dict
+                 public_cfn_subnets: typing.List[ec2.CfnSubnet],
+                 private_cfn_subnets: typing.List[ec2.CfnSubnet],
+                 isolated_cfn_subnets: typing.List[ec2.CfnSubnet],
                  created_iam_roles_map: typing.Dict[str, iam.IRole] = None,
                  **kwargs) -> None:
 
-        nested_stack_valid_kwargs = {k: v for k, v in kwargs.items() if k in ['env', 'stack_name', 'synthesizer', 'termination_protection', 'description']}
+        nested_stack_valid_kwargs = {k: v for k, v in kwargs.items() if k in ['env', 'stack_name', 'synthesizer', 'description', 'termination_protection']}
         super().__init__(scope, construct_id, **nested_stack_valid_kwargs)
 
         self.config = rds_config
         self.passed_vpc = vpc
-        self.passed_security_group = security_group
+        self.security_group_config = security_group_config # Store the SG config dict
+        self.public_cfn_subnets = public_cfn_subnets
+        self.private_cfn_subnets = private_cfn_subnets
+        self.isolated_cfn_subnets = isolated_cfn_subnets
         self.created_iam_roles_map = created_iam_roles_map if created_iam_roles_map is not None else {}
 
         instance_identifier = self.config.get('instance_identifier')
@@ -70,23 +76,84 @@ class DbInstanceStack(NestedStack):
 
         vpc_cfg_for_subnet = self.config.get("vpc_config", {})
         subnet_type_str = vpc_cfg_for_subnet.get("subnet_type_for_rds", "PRIVATE_WITH_EGRESS").upper()
+        
+        # --- Subnet Group creation logic ---
+        subnet_ids_for_db_group: typing.List[str] = []
+        l2_subnets_for_instance_props: typing.List[ec2.ISubnet] = [] # Actual L2 ISubnet objects for InstanceProps
 
-        rds_subnet_type_enum: ec2.SubnetType
-        if subnet_type_str == "PUBLIC":
-            rds_subnet_type_enum = ec2.SubnetType.PUBLIC
-        elif subnet_type_str == "PRIVATE_WITH_EGRESS":
-            rds_subnet_type_enum = ec2.SubnetType.PRIVATE_WITH_EGRESS
-        elif subnet_type_str == "PRIVATE_ISOLATED":
-            rds_subnet_type_enum = ec2.SubnetType.PRIVATE_ISOLATED
+        if self.public_cfn_subnets or self.private_cfn_subnets or self.isolated_cfn_subnets:
+            # Case 1: VPC created by this app (L1 CfnSubnets are available and correctly tagged)
+            logger.info(f"Using explicitly passed CfnSubnets for DB Subnet Group for {self.instance_identifier}.")
+            target_cfn_subnets_for_rds = []
+            if subnet_type_str == "PUBLIC":
+                target_cfn_subnets_for_rds = self.public_cfn_subnets
+            elif subnet_type_str == "PRIVATE_WITH_EGRESS":
+                target_cfn_subnets_for_rds = self.private_cfn_subnets
+            elif subnet_type_str == "PRIVATE_ISOLATED":
+                target_cfn_subnets_for_rds = self.isolated_cfn_subnets
+            else:
+                logger.warning(f"Invalid subnet_type_for_rds: '{subnet_type_str}'. Defaulting to PRIVATE_WITH_EGRESS CfnSubnets.")
+                target_cfn_subnets_for_rds = self.private_cfn_subnets # Fallback if unrecognized type
+
+            if not target_cfn_subnets_for_rds:
+                raise ValueError(f"No {subnet_type_str.lower()} CfnSubnets found for RDS instance {self.instance_identifier} in newly created VPC '{resolved_vpc.vpc_id}'.")
+            
+            subnet_ids_for_db_group = [s.ref for s in target_cfn_subnets_for_rds]
+            # Convert CfnSubnet refs to L2 ISubnet objects for vpc_subnets property
+            l2_subnets_for_instance_props = [ec2.Subnet.from_subnet_id(self, f"InstPropsSubnet{i}{construct_id}", s_id) for i, s_id in enumerate(subnet_ids_for_db_group)]
+
         else:
-            logger.warning(f"Invalid subnet_type_for_rds: '{subnet_type_str}' for RDS {self.instance_identifier}. Defaulting to PRIVATE_WITH_EGRESS.")
-            rds_subnet_type_enum = ec2.SubnetType.PRIVATE_WITH_EGRESS
+            # Case 2: VPC is an existing one (looked up by ID)
+            # Prioritize subnet IDs explicitly defined in RDS config for existing VPCs
+            explicit_subnet_ids = vpc_cfg_for_subnet.get("subnet_ids_for_rds")
+            if explicit_subnet_ids:
+                logger.info(f"Using explicit subnet_ids_for_rds from config for {self.instance_identifier} (existing VPC).")
+                if not isinstance(explicit_subnet_ids, list) or not all(isinstance(s, str) for s in explicit_subnet_ids):
+                    raise ValueError(f"subnet_ids_for_rds must be a list of strings for existing VPC. Found: {explicit_subnet_ids}")
+                subnet_ids_for_db_group = explicit_subnet_ids
+                # Convert explicit IDs to L2 ISubnet objects for vpc_subnets property
+                l2_subnets_for_instance_props = [ec2.Subnet.from_subnet_id(self, f"InstPropsSubnet{i}{construct_id}", s_id) for i, s_id in enumerate(subnet_ids_for_db_group)]
 
-        rds_subnet_selection = ec2.SubnetSelection(subnet_type=rds_subnet_type_enum)
+            else:
+                # Fallback: rely on resolved_vpc.select_subnets. This works if existing VPC has correct tags.
+                logger.info(f"Using L2 select_subnets for DB Subnet Group for {self.instance_identifier} in existing VPC (no explicit IDs).")
+                selected_l2_subnets: typing.List[ec2.ISubnet]
+                if subnet_type_str == "PUBLIC":
+                    selected_l2_subnets = resolved_vpc.select_subnets(subnet_type=ec2.SubnetType.PUBLIC).subnets
+                elif subnet_type_str == "PRIVATE_WITH_EGRESS":
+                    selected_l2_subnets = resolved_vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnets
+                elif subnet_type_str == "PRIVATE_ISOLATED":
+                    selected_l2_subnets = resolved_vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED).subnets
+                else:
+                    logger.warning(f"Invalid subnet_type_for_rds: '{subnet_type_str}'. Falling back to PrivateWithEgress L2 Subnets.")
+                    selected_l2_subnets = resolved_vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnets # Fallback
 
-        # --- Resolve Security Groups ---
-        db_security_groups = self._resolve_security_groups(resolved_vpc, self.instance_identifier, default_engine_port, construct_id, self.passed_security_group)
-        # --- End Resolve Security Groups ---
+                if not selected_l2_subnets:
+                    raise ValueError(f"No {subnet_type_str.lower()} L2 subnets found via select_subnets for RDS instance {self.instance_identifier} in existing VPC '{resolved_vpc.vpc_id}'. Ensure VPC subnets are tagged correctly or provide explicit subnet_ids_for_rds in config.")
+                
+                subnet_ids_for_db_group = [s.subnet_id for s in selected_l2_subnets]
+                l2_subnets_for_instance_props = selected_l2_subnets # Use the selected L2 objects directly
+
+        if not subnet_ids_for_db_group or not l2_subnets_for_instance_props:
+            raise ValueError(f"Critical: No subnets resolved or provided for RDS instance {self.instance_identifier}. Cannot create DB Subnet Group.")
+
+        # Create rds.CfnDBSubnetGroup (this is still a low-level construct)
+        # It needs subnet IDs (strings), which we have in subnet_ids_for_db_group
+        db_subnet_group = rds.CfnDBSubnetGroup(
+            self,
+            f"DbSubnetGroup{construct_id}",
+            db_subnet_group_description=f"Subnet group for {self.instance_identifier}",
+            subnet_ids=subnet_ids_for_db_group,
+            db_subnet_group_name=f"{self.instance_identifier.lower().replace('_','-')}-sng"
+        )
+        db_subnet_group_name = db_subnet_group.db_subnet_group_name
+        logger.info(f"Created DB Subnet Group '{db_subnet_group_name}' for RDS in '{subnet_type_str}' subnets.")
+        # --- End Subnet Group ---
+
+        # --- Security Groups (Now handled by this stack) ---
+        db_security_groups = self._resolve_security_groups(resolved_vpc, self.instance_identifier, default_engine_port, construct_id, self.security_group_config)
+        # --- End Security Groups ---
+
 
         parameter_group = self._resolve_parameter_group(self.instance_identifier, db_engine, engine_type, construct_id)
         option_group = self._resolve_option_group(self.instance_identifier, db_engine, construct_id)
@@ -103,7 +170,7 @@ class DbInstanceStack(NestedStack):
 
         monitoring_config = self.config.get("monitoring", {})
         pi_retention, pi_kms_key = self._parse_performance_insights(monitoring_config, self.instance_identifier, construct_id)
-        monitoring_interval_value, monitoring_role = self._parse_enhanced_monitoring(monitoring_config, self.instance_identifier, construct_id) # Renamed variable to avoid conflict with property name
+        monitoring_interval_value, monitoring_role = self._parse_enhanced_monitoring(monitoring_config, self.instance_identifier, construct_id)
         if monitoring_config.get("enable_devops_guru"): logger.info(f"DevOps Guru requested for {self.instance_identifier}. Ensure enabled in account.")
 
         backup_retention = Duration.days(0); preferred_backup_window = None
@@ -134,31 +201,37 @@ class DbInstanceStack(NestedStack):
         if final_db_port is None: raise ValueError(f"Port not specified/determinable for {engine_type}")
 
         instance_props = {
-            "engine": db_engine, "credentials": db_credentials,
+            "engine": db_engine,
+            "credentials": db_credentials,
             "instance_type": ec2.InstanceType(self.config.get("instance_type", "db.t3.micro")),
             "vpc": resolved_vpc,
-            "vpc_subnets": rds_subnet_selection,
-            "security_groups": db_security_groups, # Pass the resolved SG list from _resolve_security_groups
-            "instance_identifier": self.instance_identifier, "database_name": self.config.get("database_name"),
+            "vpc_subnets": ec2.SubnetSelection(subnets=l2_subnets_for_instance_props), # Pass L2 ISubnet objects via SubnetSelection
+            "security_groups": db_security_groups, # Pass the list of resolved L2 SG objects
+            "instance_identifier": self.instance_identifier,
+            "database_name": self.config.get("database_name"),
             "allocated_storage": self.config.get("allocated_storage_gb", 20),
-            "max_allocated_storage": max_allocated_storage, "storage_type": rds_storage_type,
+            "max_allocated_storage": max_allocated_storage,
+            "storage_type": rds_storage_type,
             "iops": self.config.get("iops") if storage_type_str in ["IO1", "IO2", "GP3"] else None,
             "storage_throughput": self.config.get("storage_throughput") if storage_type_str == "GP3" else None,
-            "port": final_db_port, "multi_az": self.config.get("multi_az", False),
+            "port": final_db_port,
+            "multi_az": self.config.get("multi_az", False),
             "availability_zone": self.config.get("availability_zone") if not self.config.get("multi_az", False) and self.config.get("availability_zone") else None,
-            "backup_retention": backup_retention, "preferred_backup_window": preferred_backup_window,
+            "backup_retention": backup_retention,
+            "preferred_backup_window": preferred_backup_window,
             "preferred_maintenance_window": self.config.get("preferred_maintenance_window"),
             "auto_minor_version_upgrade": self.config.get("auto_minor_version_upgrade"),
             "allow_major_version_upgrade": self.config.get("allow_major_version_upgrade", False),
-            "parameter_group": parameter_group, "option_group": option_group,
+            "parameter_group": parameter_group,
+            "option_group": option_group,
             "deletion_protection": self.config.get("deletion_protection", False),
             "publicly_accessible": self.config.get("publicly_accessible", False),
             "copy_tags_to_snapshot": self.config.get("copy_tags_to_snapshot", True),
             "cloudwatch_logs_exports": monitoring_config.get("cloudwatch_logs_exports"),
             "performance_insight_retention": pi_retention,
             "performance_insight_encryption_key": pi_kms_key,
-            "monitoring_interval": monitoring_interval_value, # Now using the variable 'monitoring_interval_value' for interval
-            "monitoring_role": monitoring_role, # This is the correct property for the IAM role
+            "monitoring_interval": monitoring_interval_value,
+            "monitoring_role": monitoring_role,
             "iam_authentication": self.config.get("iam_database_authentication_enabled", False),
             "storage_encrypted": self.config.get("storage_encrypted", True),
             "kms_key": storage_kms_key,
@@ -215,37 +288,71 @@ class DbInstanceStack(NestedStack):
             return rds.Credentials.from_secret(generated_secret), secret_resource_for_output
         else: raise ValueError(f"Invalid credentials 'source': {credential_source} for {instance_identifier}.")
 
-    def _resolve_security_groups(self, vpc: ec2.IVpc, instance_identifier: str, default_engine_port: int | None, construct_id_suffix: str, passed_security_group: typing.Optional[ec2.ISecurityGroup]) -> list[ec2.ISecurityGroup]:
+    def _resolve_security_groups(self, vpc: ec2.IVpc, instance_identifier: str, default_engine_port: int | None, construct_id_suffix: str, sg_config: typing.Dict) -> list[ec2.ISecurityGroup]:
         db_sgs = []
-        vpc_cfg = self.config.get("vpc_config", {}); sg_config = vpc_cfg.get("security_group_config", {}); sg_source = sg_config.get("source", "CREATE_NEW").upper(); safe_suffix = construct_id_suffix.replace("-","").replace("_","")
-
-        if passed_security_group:
-            db_sgs.append(passed_security_group)
-            logger.info(f"Using passed security group '{passed_security_group.security_group_id}' for RDS {instance_identifier}.")
-            return db_sgs
-
+        sg_source = sg_config.get("source", "CREATE_NEW").upper(); safe_suffix = construct_id_suffix.replace("-","").replace("_","")
+        
         if sg_source == "USE_EXISTING_IDS":
             existing_ids = sg_config.get("existing_ids", [])
             if not existing_ids:
-                logger.warning(f"SG source USE_EXISTING_IDS for {instance_identifier} but no 'existing_ids'. Creating default.")
-                db_sgs.append(ec2.SecurityGroup(self, f"DefaultDbSg{safe_suffix}", vpc=vpc, description=f"Default SG for {instance_identifier}"))
+                raise ValueError(f"SG source USE_EXISTING_IDS for {instance_identifier} but no 'existing_ids'. A security group must be provided.")
             else:
                 for i, sg_id in enumerate(existing_ids):
-                    try: db_sgs.append(ec2.SecurityGroup.from_security_group_id(self, f"ImportedDbSg{i}{safe_suffix}", sg_id))
-                    except Exception as e: logger.error(f"Failed import SG {sg_id} for {instance_identifier}: {e}")
+                    try: 
+                        # Ensure uniqueness by using a composite ID for imported SGs within this child stack's scope
+                        imported_sg = ec2.SecurityGroup.from_security_group_id(self, f"ImportedDbSg{i}{safe_suffix}", sg_id)
+                        db_sgs.append(imported_sg)
+                        logger.info(f"Imported SG {sg_id} for {instance_identifier}.")
+                    except Exception as e: 
+                        logger.error(f"Failed import SG {sg_id} for {instance_identifier}: {e}")
+                        raise # Critical failure: cannot import required SG
         elif sg_source == "CREATE_NEW":
             new_sg_opts = sg_config.get("create_new_options", {}); db_sg_name = new_sg_opts.get("name", f"{instance_identifier}-sg")
-            db_sg = ec2.SecurityGroup(self, f"DbInstanceSecurityGroup{safe_suffix}", vpc=vpc, security_group_name=db_sg_name, description=new_sg_opts.get("description", f"SG for RDS {instance_identifier}"), allow_all_outbound=new_sg_opts.get("allow_all_outbound", True))
-            db_port = self.config.get("port", default_engine_port);
-            if db_port is None: raise ValueError(f"Cannot determine DB port for SG rules of {instance_identifier}")
-            for i, source_sg_id in enumerate(new_sg_opts.get("allow_ingress_from_sg_ids", [])):
-                try: source_sg = ec2.SecurityGroup.from_security_group_id(self, f"SourceSgForDb{i}{safe_suffix}", source_sg_id); db_sg.add_ingress_rule(source_sg, ec2.Port.tcp(db_port), f"Allow DB access from SG {source_sg_id}")
-                except Exception as e: logger.error(f"Failed lookup source SG ID '{source_sg_id}': {e}")
-            db_sgs.append(db_sg)
-        else: raise ValueError(f"Invalid security_group_config.source: {sg_source} for {instance_identifier}")
+            
+            db_sg = ec2.SecurityGroup(self, f"DbInstanceSecurityGroup{safe_suffix}", # Ensure unique logical ID here
+                vpc=vpc,
+                security_group_name=db_sg_name,
+                description=new_sg_opts.get("description", f"SG for RDS {instance_identifier}"),
+                allow_all_outbound=new_sg_opts.get("allow_all_outbound", True)
+            )
+            logger.info(f"Created new SG '{db_sg_name}' for {instance_identifier}.")
 
+            db_port = self.config.get("port", default_engine_port)
+            if db_port is None: raise ValueError(f"Cannot determine DB port for SG rules of {instance_identifier}")
+            
+            # Ingress from other SGs
+            for i, source_sg_id in enumerate(new_sg_opts.get("allow_ingress_from_sg_ids", [])):
+                try: 
+                    # Ensure uniqueness when importing for rule creation
+                    source_sg = ec2.SecurityGroup.from_security_group_id(self, f"SourceSgForDbRule{i}{safe_suffix}", source_sg_id)
+                    db_sg.add_ingress_rule(source_sg, ec2.Port.tcp(db_port), f"Allow DB access from SG {source_sg_id}")
+                    logger.info(f"Added ingress rule from SG '{source_sg_id}'.")
+                except Exception as e: 
+                    logger.error(f"Failed lookup/add rule for source SG ID '{source_sg_id}': {e}")
+                    raise # Critical failure: cannot add required rule
+            
+            # Ingress from CIDRs
+            for i, cidr in enumerate(new_sg_opts.get("allow_ingress_from_cidrs", [])):
+                try:
+                    db_sg.add_ingress_rule(ec2.Peer.ipv4(cidr), ec2.Port.tcp(db_port), f"Allow DB access from CIDR {cidr}")
+                    logger.info(f"Added ingress rule from CIDR '{cidr}'.")
+                except Exception as e:
+                    logger.error(f"Failed add rule for CIDR '{cidr}': {e}")
+                    raise # Critical failure: cannot add required rule
+
+            # Ingress from self
+            if new_sg_opts.get("allow_ingress_from_self", False):
+                db_sg.add_ingress_rule(db_sg, ec2.Port.all_traffic(), "Allow traffic from other members of this SG")
+                logger.info(f"Added ingress rule from self to SG '{db_sg_name}'.")
+
+            db_sgs.append(db_sg)
+        else: 
+            # If sg_source is not recognized, raise an error as a security group is critical.
+            raise ValueError(f"Invalid security_group_config.source: '{sg_source}' for {instance_identifier}. Cannot create/resolve Security Group.")
+        
         if not db_sgs:
-             db_sgs.append(ec2.SecurityGroup(self, f"FallbackDefaultDbSg{safe_suffix}", vpc=vpc, description=f"Fallback Default SG for {instance_identifier}"))
+            # This should ideally be unreachable due to previous raises, but as a final guard
+            raise ValueError(f"No Security Groups resolved/created for {instance_identifier}. This is a critical issue that should have been caught earlier.")
 
         return db_sgs
 

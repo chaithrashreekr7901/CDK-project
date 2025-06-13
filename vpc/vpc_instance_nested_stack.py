@@ -2,15 +2,17 @@
 
 import logging
 import ipaddress
+import typing
+
 from aws_cdk import (
     NestedStack,
-    Tags, # Keep this for L2 constructs if used elsewhere, but not for CfnVPC.tags.add()
-    CfnTag, # This is correct for creating L1 tags
+    Tags,
+    CfnTag,
     aws_ec2 as ec2,
     aws_logs as logs,
     aws_iam as iam,
     CfnOutput,
-    Fn  
+    Fn
 )
 from constructs import Construct
 
@@ -20,12 +22,21 @@ if not logger.handlers:
 
 class VpcInstanceNestedStack(NestedStack):
     public_vpc: ec2.IVpc | None = None
+    public_cfn_subnets: typing.List[ec2.CfnSubnet] # Expose CfnSubnet objects
+    private_cfn_subnets: typing.List[ec2.CfnSubnet]
+    isolated_cfn_subnets: typing.List[ec2.CfnSubnet]
 
-    def __init__(self, scope: Construct, construct_id: str, vpc_specific_config: dict, **kwargs) -> None:
-        super().__init__(scope, construct_id, **kwargs)
+    def __init__(self, scope: Construct, construct_id: str,
+                 vpc_specific_config: dict,
+                 created_iam_roles_map: typing.Dict[str, iam.IRole], # Explicitly taken here
+                 **kwargs) -> None:
+        
+        super().__init__(scope, construct_id, **kwargs) # Pass remaining kwargs to parent
 
-        vpc_params = vpc_specific_config.get("config", {}) 
-        self.vpc_core_conf = vpc_params 
+        self.created_iam_roles_map = created_iam_roles_map # Store it directly
+        
+        vpc_params = vpc_specific_config.get("config", {})
+        self.vpc_core_conf = vpc_params
         self.subnets_conf = vpc_params.get("subnets_config", {})
         self.gateways_conf = vpc_params.get("gateways_config", {})
         self.route_tables_conf = vpc_params.get("route_tables_config", {})
@@ -37,36 +48,37 @@ class VpcInstanceNestedStack(NestedStack):
 
         self.vpc_id: str | None = None
         self.vpc_cidr_block: str | None = None
-        self.availability_zones_used: list[str] = []  
+        self.availability_zones_used: list[str] = []
         self.cfn_vpc_resource: ec2.CfnVPC | None = None
         self.cdk_vpc_construct: ec2.IVpc | None = None
 
-        self.public_subnets_map: dict[str, list[ec2.CfnSubnet]] = {}  
-        self.private_subnets_map: dict[str, list[ec2.CfnSubnet]] = {}  
-        self.isolated_subnets_map: dict[str, list[ec2.CfnSubnet]] = {}  
-        self.all_created_subnets: list[ec2.CfnSubnet] = []
+        # Initialize exposed subnet lists
+        self.public_cfn_subnets = []
+        self.private_cfn_subnets = []
+        self.isolated_cfn_subnets = []
+        self.all_created_subnets: list[ec2.CfnSubnet] = [] # Internal list for tracking all subnets
 
         self.internet_gateway_resource: ec2.CfnInternetGateway | None = None
         self.igw_attachment_resource: ec2.CfnVPCGatewayAttachment | None = None
 
         self.public_shared_rt: ec2.CfnRouteTable | None = None
         self.isolated_shared_rt: ec2.CfnRouteTable | None = None
-        self.private_per_az_rts: dict[str, ec2.CfnRouteTable] = {}  
+        self.private_per_az_rts: dict[str, ec2.CfnRouteTable] = {}
         self.private_shared_rt: ec2.CfnRouteTable | None = None
 
-        self.nat_gateways_by_az: dict[str, ec2.CfnNatGateway] = {}  
-        self.nat_gateway_eips_list: list[ec2.CfnEIP] = []  
-        self.nat_gateways_list: list[ec2.CfnNatGateway] = []  
+        self.nat_gateways_by_az: dict[str, ec2.CfnNatGateway] = {}
+        self.nat_gateway_eips_list: list[ec2.CfnEIP] = []
+        self.nat_gateways_list: list[ec2.CfnNatGateway] = []
 
         self.security_groups_map: dict[str, ec2.CfnSecurityGroup] = {}
         self.network_acls_map: dict[str, ec2.CfnNetworkAcl] = {}
 
-        instance_name_tag = self.vpc_core_conf.get('name', construct_id) 
+        instance_name_tag = self.vpc_core_conf.get('name', construct_id)
         logger.info(f"VpcInstanceNestedStack '{construct_id}': Initializing for VPC '{instance_name_tag}'.")
 
         if not self._configure_vpc_base_context():
             raise RuntimeError(f"Failed to configure base VPC context for {construct_id}")
-        
+
         if self.vpc_core_conf.get('creation_mode') == 'NEW':
             if not self._create_subnets_low_level():
                 raise RuntimeError(f"Subnet creation failed for {construct_id}")
@@ -78,26 +90,21 @@ class VpcInstanceNestedStack(NestedStack):
             self._create_dhcp_options_low_level()
             self._create_vpc_endpoints_low_level()
             self._create_vpc_flow_logs_low_level()
-            self._create_security_groups_low_level() 
+            self._create_security_groups_low_level()
         else: # EXISTING VPC
-            self._populate_subnet_info_from_existing_vpc() 
-            self._create_security_groups_low_level() 
-            self._create_vpc_endpoints_low_level() 
-            self._create_vpc_flow_logs_low_level() 
+            if not self._populate_subnet_info_from_existing_vpc():
+                logger.warning(f"Failed to populate subnet info from existing VPC {self.vpc_id}. Some features might not work.")
+            self._create_security_groups_low_level()
+            self._create_vpc_endpoints_low_level()
+            self._create_vpc_flow_logs_low_level()
 
 
-        # REMOVE CALL TO _apply_instance_tags() from __init__
-        # It's now handled directly within _configure_vpc_base_context for NEW VPCs
-        # and not needed for EXISTING VPCs from this stack.
-        # self._apply_instance_tags() # <--- COMMENT OUT or REMOVE THIS LINE
-
-
-        if self.cdk_vpc_construct:
-            self.public_vpc = self.cdk_vpc_construct  
+        self.public_vpc = self.cdk_vpc_construct
+        if self.public_vpc:
             logger.info(f"VpcInstanceNestedStack '{construct_id}': Exposed 'public_vpc' attribute (VPC ID: {self.public_vpc.vpc_id if self.public_vpc else 'N/A'}).")
         else:
-            self.public_vpc = None 
-            logger.error(f"VpcInstanceNestedStack '{construct_id}': CRITICAL - self.cdk_vpc_construct was NOT set. 'public_vpc' attribute is None.")
+            logger.error(f"VpcInstanceNestedStack '{construct_id}': CRITICAL - 'public_vpc' attribute is None. VPC object could not be resolved or created.")
+
 
         if self.vpc_id:
             CfnOutput(
@@ -107,30 +114,25 @@ class VpcInstanceNestedStack(NestedStack):
                 description=f"VPC ID for {instance_name_tag} (Config ID: {vpc_specific_config.get('id')})"
             )
             if self.vpc_cidr_block:
-                 CfnOutput(self, "VpcCidrOutput", value=self.vpc_cidr_block,
-                           description=f"VPC CIDR for {instance_name_tag}")
-            
-            # Only output subnet IDs if the respective subnet type has been created
-            # Check for non-empty list of CfnSubnet objects before creating Fn.join Output
-            public_subnets_refs = [s.ref for s in self._get_all_subnets_of_type('public')]
-            if public_subnets_refs:
+                CfnOutput(self, "VpcCidrOutput", value=self.vpc_cidr_block,
+                               description=f"VPC CIDR for {instance_name_tag}")
+
+            if self.public_cfn_subnets:
                 CfnOutput(self, "PublicSubnetIdsOutput",
-                          value=Fn.join(",", public_subnets_refs),
-                          description=f"Public Subnet IDs for {instance_name_tag}")
+                               value=Fn.join(",", [s.ref for s in self.public_cfn_subnets]),
+                               description=f"Public Subnet IDs for {instance_name_tag}")
 
-            private_subnets_refs = [s.ref for s in self._get_all_subnets_of_type('private')]
-            if private_subnets_refs:
+            if self.private_cfn_subnets:
                 CfnOutput(self, "PrivateSubnetIdsOutput",
-                          value=Fn.join(",", private_subnets_refs),
-                          description=f"Private Subnet IDs for {instance_name_tag}")
+                               value=Fn.join(",", [s.ref for s in self.private_cfn_subnets]),
+                               description=f"Private Subnet IDs for {instance_name_tag}")
 
-            isolated_subnets_refs = [s.ref for s in self._get_all_subnets_of_type('isolated')]
-            if isolated_subnets_refs: # <--- CRITICAL FIX: Add this conditional check
+            if self.isolated_cfn_subnets:
                 CfnOutput(self, "IsolatedSubnetIdsOutput",
-                          value=Fn.join(",", isolated_subnets_refs),
-                          description=f"Isolated Subnet IDs for {instance_name_tag}")
+                               value=Fn.join(",", [s.ref for s in self.isolated_cfn_subnets]),
+                               description=f"Isolated Subnet IDs for {instance_name_tag}")
             else:
-                logger.info(f"Skipping IsolatedSubnetIdsOutput for {instance_name_tag} as no isolated subnets were defined/created.") # Optional: log for clarity
+                logger.info(f"Skipping IsolatedSubnetIdsOutput for {instance_name_tag} as no isolated subnets were defined/created.")
 
         logger.info(f"VpcInstanceNestedStack '{construct_id}': Initialization complete.")
 
@@ -170,9 +172,9 @@ class VpcInstanceNestedStack(NestedStack):
         elif mode == 'NEW':
             self.vpc_cidr_block = self.vpc_core_conf.get('cidr')
             if not self.vpc_cidr_block:
-                logger.error("NEW mode: 'cidr' is missing.") 
+                logger.error("NEW mode: 'cidr' is missing.")
                 return False
-            
+
             if not self.subnets_conf.get('enabled', False):
                 logger.error("NEW mode: 'subnets_config.enabled' is False, but subnets are required for a new VPC.")
                 return False
@@ -181,12 +183,16 @@ class VpcInstanceNestedStack(NestedStack):
             if not az_suffix_configs:
                 logger.error("NEW mode: 'subnets_config.availability_zones_config' is missing.")
                 return False
-            
+
             current_region = self.region
             if not current_region or current_region.startswith("TOKEN"):
-                logger.error(f"Stack region not resolved ('{current_region}').")
-                return False
-            
+                logger.error(f"Stack region not resolved ('{current_region}'). This often happens during 'cdk synth' if the environment isn't bootstrapped or specified correctly.")
+                if "us-east-1" in vpc_name_tag.lower() or (self.node.try_get_context("aws:cdk:cli_context") and "us-east-1" in self.node.try_get_context("aws:cdk:cli_context").get("region", "")):
+                    current_region = "us-east-1"
+                else:
+                    logger.error("Could not resolve region for AZs and no specific region specified. Cannot proceed.")
+                    return False
+
             self.availability_zones_used = [
                 f"{current_region}{az_conf.get('az_name_suffix')}"
                 for az_conf in az_suffix_configs
@@ -195,8 +201,8 @@ class VpcInstanceNestedStack(NestedStack):
             if not self.availability_zones_used:
                 logger.error("No valid AZs determined from config.")
                 return False
-            logger.info(f"Planned AZs for new VPC '{vpc_name_tag}': {self.availability_zones_used}") # Log using actual VPC name from config
-            
+            logger.info(f"Planned AZs for new VPC '{vpc_name_tag}': {self.availability_zones_used}")
+
             initial_cfn_vpc_tags = [CfnTag(key="Name", value=vpc_name_tag)]
             extra_vpc_tags = self.vpc_core_conf.get('tags', {})
             for key, value in extra_vpc_tags.items():
@@ -209,22 +215,12 @@ class VpcInstanceNestedStack(NestedStack):
                 cidr_block=self.vpc_cidr_block,
                 enable_dns_hostnames=self.vpc_core_conf.get('dns_options', {}).get('enable_dns_hostnames', True),
                 enable_dns_support=self.vpc_core_conf.get('dns_options', {}).get('enable_dns_support', True),
-                tags=initial_cfn_vpc_tags 
+                tags=initial_cfn_vpc_tags
             )
-            
+
             self.vpc_id = self.cfn_vpc_resource.ref
             logger.info(f"New CfnVPC resource defined for '{vpc_name_tag}' (ID Token: {self.vpc_id})")
-            
-            try:
-                self.cdk_vpc_construct = ec2.Vpc.from_vpc_attributes(
-                    self,
-                    "ImportedNewVpcAttributes",
-                    vpc_id=self.vpc_id,
-                    availability_zones=self.availability_zones_used,
-                    vpc_cidr_block=self.vpc_cidr_block,
-                )
-            except Exception as e:
-                logger.warning(f"Could not create IVpc representation for new VPC: {e}. Some L2 VPC features may be limited.")
+
             return True
         else:
             logger.error(f"Invalid 'creation_mode': {mode}.")
@@ -242,7 +238,7 @@ class VpcInstanceNestedStack(NestedStack):
             return False
         az_configs = self.subnets_conf.get('availability_zones_config', [])
         if not az_configs:
-            logger.warning("Subnet creation: 'availability_zones_config' empty.")
+            logger.warning("Subnet creation: 'availability_zones_config' empty. No subnets will be created.")
             return True
         logger.info(f"Creating subnets for VPC '{self.vpc_id}' using CfnSubnet...")
         try:
@@ -250,9 +246,14 @@ class VpcInstanceNestedStack(NestedStack):
         except ValueError as e:
             logger.error(f"Invalid VPC CIDR '{self.vpc_cidr_block}': {e}")
             return False
-        
-        current_subnet_index = 0 
-        
+
+        current_subnet_base_int = int(vpc_network.network_address)
+
+        self.public_cfn_subnets = []
+        self.private_cfn_subnets = []
+        self.isolated_cfn_subnets = []
+        self.all_created_subnets = []
+
         region = self.region
         for az_idx, az_master_c in enumerate(az_configs):
             az_sfx = az_master_c.get('az_name_suffix')
@@ -261,66 +262,122 @@ class VpcInstanceNestedStack(NestedStack):
                 continue
             actual_az = f"{region}{az_sfx}"
             if actual_az not in self.availability_zones_used:
-                logger.warning(f"AZ '{actual_az}' not in VPC's planned AZs. Skipping.")
+                logger.warning(f"AZ '{actual_az}' not in VPC's planned AZs or resolved AZs. Skipping.")
                 continue
             logger.info(f"Processing subnets for AZ: {actual_az}")
 
-            s_counter = 0 
-            
-            for st_key in ['public', 'private', 'isolated']:
+            s_counter_per_az = 0
+
+            subnet_types_to_process = [
+                ('public', ec2.SubnetType.PUBLIC),
+                ('private', ec2.SubnetType.PRIVATE_WITH_EGRESS),
+                ('isolated', ec2.SubnetType.PRIVATE_ISOLATED)
+            ]
+
+            for st_key, subnet_type_enum in subnet_types_to_process:
                 st_detail = az_master_c.get(st_key, {})
                 if not st_detail.get('enabled') or st_detail.get('count', 0) <= 0:
                     continue
                 num_s = st_detail.get('count', 0)
                 s_mask = st_detail.get('cidr_mask')
                 name_pfx = st_detail.get('name_prefix', st_key.capitalize())
-                
+
                 if s_mask is None:
-                    logger.error(f"Missing 'cidr_mask' for {st_key} in AZ {actual_az}.")
+                    logger.error(f"Missing 'cidr_mask' for {st_key} in AZ {actual_az}. Subnet creation failed.")
                     return False
-                
+
                 for i in range(num_s):
-                    all_possible_subnets_of_mask = list(vpc_network.subnets(new_prefix=s_mask))
-                    
-                    if current_subnet_index >= len(all_possible_subnets_of_mask):
-                        logger.error(f"Ran out of available CIDR blocks for subnets of mask /{s_mask} in VPC {self.vpc_cidr_block}.")
+                    try:
+                        alloc_cidr_obj = ipaddress.ip_network((current_subnet_base_int, s_mask))
+                        alloc_cidr = str(alloc_cidr_obj)
+
+                        if not vpc_network.overlaps(alloc_cidr_obj):
+                            logger.error(f"Allocated CIDR {alloc_cidr} for subnet {st_key} in AZ {actual_az} is outside or overlaps VPC CIDR {self.vpc_cidr_block}.")
+                            return False
+
+                        current_subnet_base_int += alloc_cidr_obj.num_addresses
+
+                    except ValueError as e:
+                        logger.error(f"Error calculating CIDR for {st_key} in AZ {actual_az} with mask /{s_mask}: {e}. Subnet creation failed.")
                         return False
-                    
-                    alloc_cidr = str(all_possible_subnets_of_mask[current_subnet_index])
-                    current_subnet_index += 1 
-                    
-                    s_id = f"{name_pfx.replace('-', '')}{az_sfx.upper()}{i+1}Snet{s_counter}"
-                    s_tag = f"{self.vpc_core_conf.get('name', 'VPC')}-{name_pfx}-{az_sfx}-{i+1}"
-                    
+
+                    s_id_logical = f"{name_pfx.replace('-', '')}{az_sfx.upper()}Subnet{s_counter_per_az}"
+                    s_tag_name = f"{self.vpc_core_conf.get('name', 'VPC')}-{name_pfx}-{az_sfx}-{i+1}"
+
+                    subnet_tags = [
+                        CfnTag(key="Name", value=s_tag_name),
+                        CfnTag(key="aws-cdk:subnet-name", value=name_pfx),
+                        CfnTag(key="aws-cdk:subnet-type", value=subnet_type_enum.value)
+                    ]
+                    extra_subnet_tags = st_detail.get('tags', {})
+                    for tag_k, tag_v in extra_subnet_tags.items():
+                        if tag_k not in ["Name", "aws-cdk:subnet-name", "aws-cdk:subnet-type"]:
+                            subnet_tags.append(CfnTag(key=tag_k, value=tag_v))
+
                     cfn_s = ec2.CfnSubnet(
                         self,
-                        s_id,
+                        s_id_logical,
                         vpc_id=self.vpc_id,
                         cidr_block=alloc_cidr,
                         availability_zone=actual_az,
                         map_public_ip_on_launch=(st_key == 'public'),
-                        tags=[CfnTag(key="Name", value=s_tag)]
+                        tags=subnet_tags
                     )
                     if self.cfn_vpc_resource:
                         cfn_s.add_dependency(self.cfn_vpc_resource)
-                    map_attr = getattr(self, f"{st_key}_subnets_map")
-                    map_attr.setdefault(actual_az, []).append(cfn_s)
+
+                    if st_key == 'public':
+                        self.public_cfn_subnets.append(cfn_s)
+                    elif st_key == 'private':
+                        self.private_cfn_subnets.append(cfn_s)
+                    elif st_key == 'isolated':
+                        self.isolated_cfn_subnets.append(cfn_s)
                     self.all_created_subnets.append(cfn_s)
-                    logger.info(f"Defined {st_key} subnet '{s_tag}' CIDR {alloc_cidr} in {actual_az}.")
-                    s_counter += 1
+
+                    logger.info(f"Defined {st_key} subnet '{s_tag_name}' CIDR {alloc_cidr} in {actual_az}.")
+                    s_counter_per_az += 1
+        
         logger.info(f"Finished defining {len(self.all_created_subnets)} subnets.")
+
+        try:
+            self.cdk_vpc_construct = ec2.Vpc.from_vpc_attributes(
+                self,
+                "ImportedNewVpcAttributes",
+                vpc_id=self.vpc_id,
+                availability_zones=self.availability_zones_used,
+                vpc_cidr_block=self.vpc_cidr_block,
+                public_subnet_ids=[s.ref for s in self.public_cfn_subnets],
+                private_subnet_ids=[s.ref for s in self.private_cfn_subnets],
+                isolated_subnet_ids=[s.ref for s in self.isolated_cfn_subnets]
+            )
+            logger.info(f"L2 Vpc construct created from CfnVPC attributes for '{self.vpc_id}'.")
+        except Exception as e:
+            logger.warning(f"Could not create IVpc representation for new VPC using from_vpc_attributes: {e}. This might affect L2 features relying on it.")
+
         return True
 
     def _get_subnets_by_type_for_az(self, subnet_type_key: str, az: str) -> list[ec2.CfnSubnet]:
-        map_to_use = getattr(self, f"{subnet_type_key.lower()}_subnets_map", {})
-        return map_to_use.get(az, [])
+        if subnet_type_key.lower() == 'public':
+            all_typed_subnets = self.public_cfn_subnets
+        elif subnet_type_key.lower() == 'private':
+            all_typed_subnets = self.private_cfn_subnets
+        elif subnet_type_key.lower() == 'isolated':
+            all_typed_subnets = self.isolated_cfn_subnets
+        else:
+            return []
+
+        return [s for s in all_typed_subnets if s.availability_zone == az]
 
     def _get_all_subnets_of_type(self, subnet_type_key: str) -> list[ec2.CfnSubnet]:
-        flat_list = []
-        map_to_use = getattr(self, f"{subnet_type_key.lower()}_subnets_map", {})
-        for az_subnets in map_to_use.values():
-            flat_list.extend(az_subnets)
-        return flat_list
+        if subnet_type_key.lower() == 'public':
+            return self.public_cfn_subnets
+        elif subnet_type_key.lower() == 'private':
+            return self.private_cfn_subnets
+        elif subnet_type_key.lower() == 'isolated':
+            return self.isolated_cfn_subnets
+        else:
+            return []
+
 
     def _create_gateways_low_level(self):
         if not self.vpc_id:
@@ -348,9 +405,9 @@ class VpcInstanceNestedStack(NestedStack):
         nat_conf = self.gateways_conf.get("nat_gateways", {})
         if nat_conf.get("enabled", False):
             count_per_az = nat_conf.get("count_per_az", 0)
-            total_count = nat_conf.get("total_count", 0)  
+            total_count = nat_conf.get("total_count", 0)
 
-            if count_per_az > 0:  
+            if count_per_az > 0:
                 logger.info(f"Planning {count_per_az} NAT Gateway(s) per AZ with public subnets.")
                 nat_created_total = 0
                 for az_name in self.availability_zones_used:
@@ -376,12 +433,13 @@ class VpcInstanceNestedStack(NestedStack):
                         )
                         if self.igw_attachment_resource:
                             nat_gw.add_dependency(self.igw_attachment_resource)
-                        self.nat_gateways_by_az[az_name] = nat_gw  
+                        self.nat_gateways_by_az[az_name] = nat_gw
+                        self.nat_gateways_list.append(nat_gw)
                         logger.info(f"NAT Gateway '{nat_id}' defined in subnet '{target_public_subnet.ref}' (AZ: {az_name}).")
                         nat_created_total += 1
                 logger.info(f"Defined {nat_created_total} NAT Gateways (per-AZ strategy).")
 
-            elif total_count > 0:  
+            elif total_count > 0:
                 logger.info(f"Planning a total of {total_count} NAT Gateway(s) for the VPC.")
                 public_subnets_all = self._get_all_subnets_of_type('public')
                 if not public_subnets_all:
@@ -391,8 +449,8 @@ class VpcInstanceNestedStack(NestedStack):
                 if num_to_create < total_count:
                     logger.warning(f"Requested {total_count} total NATs, but only {num_to_create} public subnets available. Creating {num_to_create} NATs.")
                 for i in range(num_to_create):
-                    target_public_subnet = public_subnets_all[i]  
-                    az_of_subnet = target_public_subnet.availability_zone  
+                    target_public_subnet = public_subnets_all[i]
+                    az_of_subnet = target_public_subnet.availability_zone
                     eip_id = f"SharedNatEIP{i+1}"
                     eip_tag = f"{self.vpc_core_conf.get('name', 'VPC')}-SharedNatEIP-{i+1}"
                     eip = ec2.CfnEIP(self, eip_id, domain="vpc", tags=[CfnTag(key="Name", value=eip_tag)])
@@ -444,10 +502,10 @@ class VpcInstanceNestedStack(NestedStack):
         # Private Route Tables
         private_rt_conf = rt_cats_conf.get('private', {})
         if private_rt_conf.get("enabled", False) and self._get_all_subnets_of_type('private'):
-            if is_nat_per_az:  
+            if is_nat_per_az:
                 logger.info("Creating per-AZ private route tables for HA NAT Gateway strategy.")
                 for az_name in self.availability_zones_used:
-                    if self._get_subnets_by_type_for_az('private', az_name):  
+                    if self._get_subnets_by_type_for_az('private', az_name):
                         az_suffix = az_name.split(self.region)[-1] if self.region and self.region in az_name else az_name
                         rt_id = f"PrivateRTForAZ{az_suffix.upper()}"
                         rt_tag = f"{vpc_pfx}-private-{az_suffix}-rt"
@@ -461,7 +519,7 @@ class VpcInstanceNestedStack(NestedStack):
                             rt.add_dependency(self.cfn_vpc_resource)
                         self.private_per_az_rts[az_name] = rt
                         logger.info(f"Defined private RT '{rt_id}' for AZ {az_name}.")
-            else:  
+            else:
                 rt_id = "PrivateSharedRT"
                 rt_tag = f"{vpc_pfx}-private-shared-rt"
                 self.private_shared_rt = ec2.CfnRouteTable(
@@ -513,7 +571,7 @@ class VpcInstanceNestedStack(NestedStack):
                 logger.info(f"Associated {len(public_subnets)} public subnets with {self.public_shared_rt.ref}.")
 
         # Private subnets
-        if is_nat_per_az:  
+        if is_nat_per_az:
             for az_name, private_rt_for_az in self.private_per_az_rts.items():
                 private_subnets_in_az = self._get_subnets_by_type_for_az('private', az_name)
                 for idx, snet_cfn in enumerate(private_subnets_in_az):
@@ -526,7 +584,7 @@ class VpcInstanceNestedStack(NestedStack):
                     assoc_counter += 1
                 if private_subnets_in_az:
                     logger.info(f"Associated {len(private_subnets_in_az)} private subnets in AZ {az_name} with RT {private_rt_for_az.ref}.")
-        elif self.private_shared_rt:  
+        elif self.private_shared_rt:
             private_subnets = self._get_all_subnets_of_type('private')
             for idx, snet_cfn in enumerate(private_subnets):
                 ec2.CfnSubnetRouteTableAssociation(
@@ -579,7 +637,7 @@ class VpcInstanceNestedStack(NestedStack):
 
         # Default Private to NAT
         if def_routes_c.get('private_to_nat', False):
-            if is_nat_per_az:  
+            if is_nat_per_az:
                 for az_name, private_rt_for_az in self.private_per_az_rts.items():
                     nat_gw_in_az = self.nat_gateways_by_az.get(az_name)
                     if nat_gw_in_az:
@@ -594,8 +652,8 @@ class VpcInstanceNestedStack(NestedStack):
                         route_id_counter += 1
                     else:
                         logger.warning(f"Config requests private_to_nat for AZ {az_name}, but no NAT GW found in that AZ.")
-            elif self.private_shared_rt and self.nat_gateways_list:  
-                target_nat_gw = self.nat_gateways_list[0]  
+            elif self.private_shared_rt and self.nat_gateways_list:
+                target_nat_gw = self.nat_gateways_list[0]
                 logger.warning(f"PRIVATE ROUTING (Shared): Shared private RT '{self.private_shared_rt.ref}' routes to FIRST shared NAT GW '{target_nat_gw.ref}'.")
                 ec2.CfnRoute(
                     self,
@@ -636,7 +694,7 @@ class VpcInstanceNestedStack(NestedStack):
                             has_d = True
                         tgt_type = r_def.get('target_type', '').lower()
                         tgt_id_cfg = r_def.get('target_id')
-                        comment = r_def.get('comment', '')  # For logging
+                        comment = r_def.get('comment', '')
                         if tgt_type == 'internet_gateway' and self.internet_gateway_resource:
                             r_props['gateway_id'] = self.internet_gateway_resource.ref
                             has_t = True
@@ -644,9 +702,9 @@ class VpcInstanceNestedStack(NestedStack):
                             if is_nat_per_az:
                                 current_az_for_rt = next((az for az, rt in self.private_per_az_rts.items() if rt.ref == target_rt_obj.ref), None)
                                 nat_target_for_custom = self.nat_gateways_by_az.get(current_az_for_rt) if current_az_for_rt else None
-                            else: 
+                            else:
                                 nat_target_for_custom = self.nat_gateways_list[0] if self.nat_gateways_list else None
-                            
+
                             if nat_target_for_custom:
                                 r_props['nat_gateway_id'] = nat_target_for_custom.ref
                                 has_t = True
@@ -726,10 +784,10 @@ class VpcInstanceNestedStack(NestedStack):
             props['from_port'] = int(rule_config.get("icmp_type", -1))
             props['to_port'] = int(rule_config.get("icmp_code", -1))
         peer_spec = False
-        
+
         # New: Handle SECURITY_GROUP_ID_REF for inter-SG peering within the same VPC instance
         if "peer_type" in rule_config and rule_config["peer_type"] == "SECURITY_GROUP_ID_REF":
-            peer_sg_ref_id = rule_config.get("peer_value_ref_id") or rule_config.get("peer_value") # Support old and new keys
+            peer_sg_ref_id = rule_config.get("peer_value_ref_id") or rule_config.get("peer_value")
             if peer_sg_ref_id and peer_sg_ref_id in self.security_groups_map:
                 peer_sg_obj = self.security_groups_map[peer_sg_ref_id]
                 if is_egress:
@@ -741,20 +799,19 @@ class VpcInstanceNestedStack(NestedStack):
             else:
                 logger.error(f"SG Rule: Could not resolve SECURITY_GROUP_ID_REF '{peer_sg_ref_id}' in current VPC instance. Rule: {rule_config}")
                 return None
-        # Original: Handle other peer types
-        elif "peer_cidr" in rule_config: # Old name
+        elif "peer_cidr" in rule_config:
             props['cidr_ip'] = rule_config["peer_cidr"]
             peer_spec = True
-        elif "peer_type" in rule_config and rule_config["peer_type"] == "CIDR_IPV4": # New name
+        elif "peer_type" in rule_config and rule_config["peer_type"] == "CIDR_IPV4":
             props['cidr_ip'] = rule_config["peer_value"]
             peer_spec = True
-        elif "peer_cidr_ipv6" in rule_config: # Old name
+        elif "peer_cidr_ipv6" in rule_config:
             props['cidr_ipv6'] = rule_config["peer_cidr_ipv6"]
             peer_spec = True
-        elif "peer_type" in rule_config and rule_config["peer_type"] == "CIDR_IPV6": # New name
+        elif "peer_type" in rule_config and rule_config["peer_type"] == "CIDR_IPV6":
             props['cidr_ipv6'] = rule_config["peer_value"]
             peer_spec = True
-        elif "peer_sg_id_from_config" in rule_config: # Old name for internal SG reference
+        elif "peer_sg_id_from_config" in rule_config:
             peer_sg_key = rule_config["peer_sg_id_from_config"]
             if peer_sg_key in self.security_groups_map:
                 peer_sg_obj = self.security_groups_map[peer_sg_key]
@@ -766,8 +823,7 @@ class VpcInstanceNestedStack(NestedStack):
             else:
                 logger.error(f"Peer SG key '{peer_sg_key}' not found. Rule: {rule_config}")
                 return None
-        elif "peer_type" in rule_config and rule_config["peer_type"] == "SECURITY_GROUP_ID": # New name for external SG ID
-             # This will be a raw ID, not resolved from self.security_groups_map
+        elif "peer_type" in rule_config and rule_config["peer_type"] == "SECURITY_GROUP_ID":
              if is_egress:
                  props['destination_security_group_id'] = rule_config["peer_value"]
              else:
@@ -780,7 +836,7 @@ class VpcInstanceNestedStack(NestedStack):
             props['cidr_ipv6'] = "::/0"
             peer_spec = True
         elif "peer_type" in rule_config and rule_config["peer_type"] == "SELF":
-            if is_egress: # Egress to self is usually not needed as outbound is implicitly allowed.
+            if is_egress:
                 props['destination_security_group_id'] = cfn_sg_attr_group_id
             else:
                 props['source_security_group_id'] = cfn_sg_attr_group_id
@@ -839,14 +895,13 @@ class VpcInstanceNestedStack(NestedStack):
                     entry_count += 1
             
             # Subnet to NACL Association
-            # Determine which subnets to associate based on 'nacl_cfg_key' (e.g., 'Public', 'Private', 'Isolated')
             subnets_to_associate = []
             if nacl_cfg_key.lower() == 'public':
-                subnets_to_associate = self._get_all_subnets_of_type('public')
+                subnets_to_associate = self.public_cfn_subnets
             elif nacl_cfg_key.lower() == 'private':
-                subnets_to_associate = self._get_all_subnets_of_type('private')
+                subnets_to_associate = self.private_cfn_subnets
             elif nacl_cfg_key.lower() == 'isolated':
-                subnets_to_associate = self._get_all_subnets_of_type('isolated')
+                subnets_to_associate = self.isolated_cfn_subnets
             else:
                 logger.warning(f"NACL config key '{nacl_cfg_key}' does not map to a known subnet type (public, private, isolated). No subnets will be automatically associated.")
 
@@ -865,7 +920,7 @@ class VpcInstanceNestedStack(NestedStack):
 
     def _parse_nacl_rule_low_level(self, rule_config: dict, cfn_nacl_ref: str, is_egress: bool) -> dict | None:
         props = {'network_acl_id': cfn_nacl_ref, 'egress': is_egress}
-        proto_map = {'tcp': 6, 'udp': 17, 'icmp': 1, 'all': -1, '6': 6, '17': 17, '1': 1, '-1': -1}
+        proto_map = {'tcp': 6, 'udp': 17, 'icmp': 1, 'all': '-1', 6: '6', 17: '17', 1: '1', -1: '-1'}
         if "rule" not in rule_config:
             logger.error(f"NACL rule missing 'rule' number: {rule_config}")
             return None
@@ -877,7 +932,7 @@ class VpcInstanceNestedStack(NestedStack):
         if "action" not in rule_config or str(rule_config['action']).lower() not in ['allow', 'deny']:
             logger.error(f"NACL rule missing/invalid 'action': {rule_config}")
             return None
-        props['rule_action'] = str(rule_config['action']).upper() 
+        props['rule_action'] = str(rule_config['action']).upper()
         if "protocol" not in rule_config:
             logger.error(f"NACL rule missing 'protocol': {rule_config}")
             return None
@@ -982,9 +1037,7 @@ class VpcInstanceNestedStack(NestedStack):
             ep_cdk_id = f"VpcEp{ep_cfg_key.replace('.','').replace('-','').capitalize()}{ep_cdk_counter}"
             
             # Populate route tables for gateway endpoints based on their existence
-            # This requires public_shared_rt, private_per_az_rts, private_shared_rt, isolated_shared_rt
-            # to be populated by _create_route_tables_for_vpc if they are enabled.
-            route_tables_by_category = { 
+            route_tables_by_category = {
                 'public': [self.public_shared_rt] if self.public_shared_rt else [],
                 'private': list(self.private_per_az_rts.values()) if self.private_per_az_rts else ([self.private_shared_rt] if self.private_shared_rt else []),
                 'isolated': [self.isolated_shared_rt] if self.isolated_shared_rt else []
@@ -999,9 +1052,9 @@ class VpcInstanceNestedStack(NestedStack):
                 tgt_rt_ids = []
                 for rt_cat_key in ep_details.get('route_table_target_types', []):
                     rt_list_for_cat = route_tables_by_category.get(rt_cat_key.lower())
-                    if rt_list_for_cat: 
-                        for rt_obj in rt_list_for_cat: 
-                            if rt_obj: 
+                    if rt_list_for_cat:
+                        for rt_obj in rt_list_for_cat:
+                            if rt_obj:
                                 tgt_rt_ids.append(rt_obj.ref)
                             else:
                                 logger.warning(f"Found None RT object in list for '{rt_cat_key}' for Gateway Ep '{ep_cfg_key}'.")
@@ -1013,8 +1066,14 @@ class VpcInstanceNestedStack(NestedStack):
                 common_cfn_p['route_table_ids'] = list(set(tgt_rt_ids))
             elif ep_type == 'INTERFACE':
                 tgt_snet_ids = []
-                for snet_cat_key in ep_details.get('subnet_target_types', []):
-                    tgt_snet_ids.extend([s.ref for s in self._get_all_subnets_of_type(snet_cat_key.lower())])
+                # Use the exposed CfnSubnet lists to get their refs
+                if 'public' in ep_details.get('subnet_target_types', []):
+                    tgt_snet_ids.extend([s.ref for s in self.public_cfn_subnets])
+                if 'private' in ep_details.get('subnet_target_types', []):
+                    tgt_snet_ids.extend([s.ref for s in self.private_cfn_subnets])
+                if 'isolated' in ep_details.get('subnet_target_types', []):
+                    tgt_snet_ids.extend([s.ref for s in self.isolated_cfn_subnets])
+
                 if not tgt_snet_ids:
                     logger.warning(f"Cannot create Interface Ep '{ep_cfg_key}': No target subnets.")
                     continue
@@ -1067,9 +1126,9 @@ class VpcInstanceNestedStack(NestedStack):
         }
         if days in mapping:
             return mapping[days]
-        if 28 <= days <= 31: 
+        if 28 <= days <= 31:
             return logs.RetentionDays.ONE_MONTH
-        if 59 <= days <= 62: 
+        if 59 <= days <= 62:
             return logs.RetentionDays.TWO_MONTHS
         
         logger.warning(f"Retention period {days} days not directly mapped to a precise enum value. Using closest standard.")
@@ -1087,7 +1146,7 @@ class VpcInstanceNestedStack(NestedStack):
             if days >= 5: return logs.RetentionDays.FIVE_DAYS
             if days >= 3: return logs.RetentionDays.THREE_DAYS
             if days >= 1: return logs.RetentionDays.ONE_DAY
-        return None 
+        return None
 
     def _create_vpc_flow_logs_low_level(self):
         if not self.vpc_flow_logs_conf.get("enabled", False) or not self.vpc_id:
@@ -1133,8 +1192,8 @@ class VpcInstanceNestedStack(NestedStack):
                 cw_lg = logs.LogGroup(self, "VpcFlowLogGroupResource", retention=retention_enum)
                 fl_cfn_p['log_group_name'] = cw_lg.log_group_name
                 logger.info(f"Flow logs to new CWL Group '{cw_lg.log_group_name}' with retention: {retention_enum.name}.")
-            else: 
-                cw_lg = logs.LogGroup(self, "VpcFlowLogGroupResource") 
+            else:
+                cw_lg = logs.LogGroup(self, "VpcFlowLogGroupResource")
                 fl_cfn_p['log_group_name'] = cw_lg.log_group_name
                 logger.info(f"Flow logs to new CWL Group '{cw_lg.log_group_name}' (default retention).")
 
@@ -1164,21 +1223,15 @@ class VpcInstanceNestedStack(NestedStack):
             configured_tags = self.vpc_core_conf.get("tags", {})
             if configured_tags:
                 logger.info(f"Applying additional tags for CfnVPC '{self.vpc_core_conf.get('name', 'VPC')}' from configuration.")
-                # This loop is correct for appending to the Cfn resource's tags list property
                 for key, value in configured_tags.items():
-                    # Check if tag already exists (e.g., "Name" tag that's part of initial CfnVPC constructor)
-                    # The tags list on CfnVPC should be directly accessible as a Python list of CfnTag objects.
-                    # No need to use list_tags() or Tags.of() here.
                     tag_exists_in_initial_list = False
-                    for existing_tag in self.cfn_vpc_resource.tags: # Access the tags list directly
+                    for existing_tag in self.cfn_vpc_resource.tags:
                         if existing_tag.key == key:
                             tag_exists_in_initial_list = True
                             break
                     
                     if not tag_exists_in_initial_list:
-                        # Append new CfnTag objects to the existing tags list property
-                        # For L1 constructs, you append to the list, not call .add()
-                        self.cfn_vpc_resource.tags.append(CfnTag(key=key, value=value)) # <--- FIX: Use append for list
+                        self.cfn_vpc_resource.tags.append(CfnTag(key=key, value=value))
                     else:
                         logger.debug(f"Tag '{key}' already exists for VPC {self.vpc_core_conf.get('name', 'VPC')}, skipping addition.")
                 logger.debug(f"Finished applying additional tags from configuration for CfnVPC.")
@@ -1190,30 +1243,66 @@ class VpcInstanceNestedStack(NestedStack):
 
     def _populate_subnet_info_from_existing_vpc(self):
         if not self.cdk_vpc_construct or self.vpc_core_conf.get('creation_mode') != 'EXISTING':
-            return False 
+            return False
 
-        logger.info(f"Populating subnet info from existing VPC '{self.vpc_id}' based on tags.")
-        
+        logger.info(f"Populating subnet info from existing VPC '{self.vpc_id}' via L2 lookup result.")
+
         try:
-            self.public_subnets_map = {}
-            self.private_subnets_map = {}
-            self.isolated_subnets_map = {}
+            self.public_cfn_subnets = []
+            self.private_cfn_subnets = []
+            self.isolated_cfn_subnets = []
             self.all_created_subnets = []
 
-            for subnet in self.cdk_vpc_construct.public_subnets:
-                if isinstance(subnet.node.default_child, ec2.CfnSubnet):
-                    self.public_subnets_map.setdefault(subnet.availability_zone, []).append(subnet.node.default_child)
-                    self.all_created_subnets.append(subnet.node.default_child)
-            for subnet in self.cdk_vpc_construct.private_subnets:
-                if isinstance(subnet.node.default_child, ec2.CfnSubnet):
-                    self.private_subnets_map.setdefault(subnet.availability_zone, []).append(subnet.node.default_child)
-                    self.all_created_subnets.append(subnet.node.default_child)
-            for subnet in self.cdk_vpc_construct.isolated_subnets:
-                if isinstance(subnet.node.default_child, ec2.CfnSubnet):
-                    self.isolated_subnets_map.setdefault(subnet.availability_zone, []).append(subnet.node.default_child)
-                    self.all_created_subnets.append(subnet.node.default_child)
+            public_l2_subnets = self.cdk_vpc_construct.select_subnets(subnet_type=ec2.SubnetType.PUBLIC).subnets
+            private_l2_subnets = self.cdk_vpc_construct.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnets
+            isolated_l2_subnets = self.cdk_vpc_construct.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED).subnets
+
+            for subnet_l2 in public_l2_subnets:
+                if hasattr(subnet_l2.node, 'default_child') and isinstance(subnet_l2.node.default_child, ec2.CfnSubnet):
+                    self.public_cfn_subnets.append(subnet_l2.node.default_child)
+                    self.all_created_subnets.append(subnet_l2.node.default_child)
+                else:
+                    # Create a CfnSubnet construct from its ID to populate exposed lists for L1-based RDS
+                    # Use a unique ID based on subnet_id and AZ to prevent collision in this scope.
+                    # Note: The CfnSubnet constructor needs CIDR and AZ, which might not be directly available
+                    # for an arbitrary looked-up ISubnet. This might still be a weak point if the underlying
+                    # properties aren't resolved by from_lookup.
+                    cfn_s_from_id = ec2.CfnSubnet(self, f"CfnSubnetRef{subnet_l2.subnet_id.replace('-', '')[:8]}{subnet_l2.availability_zone.replace('-', '')}",
+                                                 vpc_id=self.vpc_id,
+                                                 cidr_block=subnet_l2.ipv4_cidr_block, # This might be null if not resolved by lookup
+                                                 availability_zone=subnet_l2.availability_zone)
+                    self.public_cfn_subnets.append(cfn_s_from_id)
+                    self.all_created_subnets.append(cfn_s_from_id)
+
+
+            for subnet_l2 in private_l2_subnets:
+                if hasattr(subnet_l2.node, 'default_child') and isinstance(subnet_l2.node.default_child, ec2.CfnSubnet):
+                    self.private_cfn_subnets.append(subnet_l2.node.default_child)
+                    self.all_created_subnets.append(subnet_l2.node.default_child)
+                else:
+                    cfn_s_from_id = ec2.CfnSubnet(self, f"CfnSubnetRef{subnet_l2.subnet_id.replace('-', '')[:8]}{subnet_l2.availability_zone.replace('-', '')}",
+                                                 vpc_id=self.vpc_id,
+                                                 cidr_block=subnet_l2.ipv4_cidr_block,
+                                                 availability_zone=subnet_l2.availability_zone)
+                    self.private_cfn_subnets.append(cfn_s_from_id)
+                    self.all_created_subnets.append(cfn_s_from_id)
+
+            for subnet_l2 in isolated_l2_subnets:
+                if hasattr(subnet_l2.node, 'default_child') and isinstance(subnet_l2.node.default_child, ec2.CfnSubnet):
+                    self.isolated_cfn_subnets.append(subnet_l2.node.default_child)
+                    self.all_created_subnets.append(subnet_l2.node.default_child)
+                else:
+                    cfn_s_from_id = ec2.CfnSubnet(self, f"CfnSubnetRef{subnet_l2.subnet_id.replace('-', '')[:8]}{subnet_l2.availability_zone.replace('-', '')}",
+                                                 vpc_id=self.vpc_id,
+                                                 cidr_block=subnet_l2.ipv4_cidr_block,
+                                                 availability_zone=subnet_l2.availability_zone)
+                    self.isolated_cfn_subnets.append(cfn_s_from_id)
+                    self.all_created_subnets.append(cfn_s_from_id)
             
-            logger.info(f"Populated subnet maps for existing VPC via L2 subnet properties. Total: {len(self.all_created_subnets)}.")
+            if not self.all_created_subnets:
+                logger.warning(f"No CfnSubnet objects could be populated from existing VPC '{self.vpc_id}'. This might affect L1-specific route/NACL associations. Ensure existing subnets are properly tagged (aws-cdk:subnet-type, aws-cdk:subnet-name) or explicitly defined in config.")
+            else:
+                logger.info(f"Populated subnet maps for existing VPC via L2 subnet properties. Total CfnSubnets: {len(self.all_created_subnets)}.")
             return True
         except Exception as e:
             logger.warning(f"Could not populate subnet info from L2 VPC subnets for existing VPC '{self.vpc_id}': {e}. This might affect routing/NACLs. Consider explicit subnet IDs in config for existing VPCs.")

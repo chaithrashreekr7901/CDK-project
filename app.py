@@ -49,7 +49,7 @@ MainOrchestratorStack(app, main_stack_name,
 )
 
 # --- CI/CD Pipeline Stack Configuration ---
-GITHUB_CONNECTION_ARN = "arn:aws:codeconnections:us-east-1:198484116691:connection/477938bc-d5e5-47f0-9d40-3f6e927039e1"
+GITHUB_CONNECTION_ARN = "arn:aws:codeconnections:us-east-1:417528805539:connection/64c817b4-9fd9-4e08-8792-3024f3440008"
 GITHUB_REPO_OWNER = "chaithrashreekr7901"
 GITHUB_REPO_NAME = "CDK-project"
 GITHUB_BRANCH = "cdk-project-updated"
