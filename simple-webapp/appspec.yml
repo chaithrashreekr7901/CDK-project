@@ -13,7 +13,7 @@ files:
     destination: /tmp/codedeploy/scripts/
   - source: /scripts/validate_service.sh
     destination: /tmp/codedeploy/scripts/
-  - source: /scripts/clean_old_files.sh   # <--- Added your cleaning script
+  - source: /scripts/clean_old_files.sh   
     destination: /tmp/codedeploy/scripts/
 
 permissions:

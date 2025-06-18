@@ -586,7 +586,9 @@ def get_deployment_configurations() -> dict:
             },
             {
                 "id": "AuroraMySQLProdCluster", 
-                "enabled": True, 
+                "enabled": False, #this is true fro the deployment
+                
+                
                 "deployment_architecture": "CLUSTER", # <<< Key to differentiate
                 "engine_type": "AURORA_MYSQL", # Options: "AURORA_MYSQL", "AURORA_POSTGRESQL"
                 "config": {
@@ -1401,7 +1403,8 @@ def get_deployment_configurations() -> dict:
                     # --- Core Instance Configuration ---
                     "ami_config": { # OBJECT (Optional): Defines how to select the AMI. If not set, image_id must be set or AMI chosen at launch.
                         "source": "ID", # STRING: "LATEST_AMAZON_LINUX_2023", "LATEST_AMAZON_LINUX_2", "ID", "LOOKUP".
-                         "id": "ami-0953476d60561c955",    # STRING: Required if source is "ID". Specific AMI ID.
+                        #  "id": "ami-0953476d60561c955",    # STRING: Required if source is "ID". Specific AMI ID.ami-09e6f87a47903347c
+                         "id":"ami-09e6f87a47903347c",
                         "architecture": "x86_64"          # STRING: "x86_64" or "arm_64".
                         # "lookup_filters": { "name": "my-custom-ami-*", "owners": ["self"] } # If source is "LOOKUP"
                     },
@@ -1778,12 +1781,12 @@ def get_deployment_configurations() -> dict:
                                 "protocol": "HTTP",     # STRING (Optional): Default: "HTTP" (if target group protocol is HTTP/HTTPS), else "TCP". 
                                                         # Values: "HTTP", "HTTPS", "TCP" (NLB also supports TLS, UDP, TCP_UDP).
                                 "port": "8080", # STRING (Optional): Default: "traffic-port" (uses target's port). Or specific port number (as string).
-                                "path": "/healthz",     # STRING (Optional): Default: "/". Required for HTTP/HTTPS health checks. Path to ping.
+                                "path": "/",     # STRING (Optional): Default: "/". Required for HTTP/HTTPS health checks. Path to ping.
                                 "interval_seconds": 35, # INTEGER (Optional): Default: 30 (instance/ip), 35 (Lambda). Range: 5-300.
                                 "timeout_seconds": 30,  # INTEGER (Optional): Default: 5 (instance/ip), 30 (Lambda). Range: 2-120. Must be less than interval.
                                 "healthy_threshold_count": 2,   # INTEGER (Optional): Default: 3 (instance/ip), 2 (Lambda). Range: 2-10.
                                 "unhealthy_threshold_count": 2, # INTEGER (Optional): Default: 3 (instance/ip), 2 (Lambda). Range: 2-10.
-                                "matcher_http_codes": "404" # STRING (Optional): Default: "200". For HTTP/HTTPS. Comma-separated or range (e.g., "200,202", "200-299").
+                                "matcher_http_codes": "200" # STRING (Optional): Default: "200". For HTTP/HTTPS. Comma-separated or range (e.g., "200,202", "200-299").
                             },
                             "deregistration_delay_seconds": 60, # INTEGER (Optional): Default: 300. Time to wait for in-flight requests to complete on deregistering targets. Range: 0-3600.
                             
